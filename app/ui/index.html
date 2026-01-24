@@ -1,0 +1,1486 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>API for TTS - Voice Manager</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Space+Grotesk:wght@400;500;600&display=swap");
+
+      :root {
+        --ink: #0f1b2b;
+        --ink-soft: #2a3a52;
+        --paper: #f6f1e8;
+        --sand: #e7d8c9;
+        --sun: #f59e0b;
+        --sage: #1f7a74;
+        --clay: #c96b2b;
+        --wave: #d9f2ee;
+        --line: rgba(15, 27, 43, 0.12);
+        --shadow: 0 20px 60px rgba(15, 27, 43, 0.16);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Space Grotesk", "Trebuchet MS", "Lucida Sans Unicode", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 20% 20%, #fff4d8 0%, transparent 40%),
+          radial-gradient(circle at 80% 10%, #d3f4f0 0%, transparent 45%),
+          linear-gradient(145deg, #fdf6ea 0%, #f0e7db 55%, #f7efe1 100%);
+        min-height: 100vh;
+      }
+
+      .wrap {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 48px 20px 80px;
+      }
+
+      header {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        margin-bottom: 32px;
+      }
+
+      .title {
+        font-family: "Fraunces", "Georgia", serif;
+        font-size: clamp(32px, 4vw, 44px);
+        letter-spacing: -0.02em;
+        margin: 0;
+      }
+
+      .subtitle {
+        margin: 0;
+        color: var(--ink-soft);
+        font-size: 16px;
+        max-width: 720px;
+      }
+
+      .pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .pill {
+        background: var(--wave);
+        border: 1px solid var(--line);
+        color: var(--ink-soft);
+        padding: 6px 12px;
+        border-radius: 999px;
+        font-size: 13px;
+      }
+
+      .grid {
+        display: grid;
+        gap: 18px;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      }
+
+      .card {
+        background: var(--paper);
+        border-radius: 24px;
+        padding: 20px;
+        border: 1px solid var(--line);
+        box-shadow: var(--shadow);
+        position: relative;
+        overflow: hidden;
+        animation: rise 0.6s ease both;
+      }
+
+      .card::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: 24px;
+        background: linear-gradient(140deg, rgba(245, 158, 11, 0.08), transparent 40%);
+        pointer-events: none;
+      }
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(16px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      h2 {
+        margin: 0 0 12px;
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+
+      label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink-soft);
+        margin-bottom: 6px;
+      }
+
+      input,
+      select,
+      textarea,
+      button {
+        font-family: inherit;
+      }
+
+      input,
+      select,
+      textarea {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+        font-size: 14px;
+      }
+
+      textarea {
+        min-height: 110px;
+        resize: vertical;
+      }
+
+      button {
+        border: none;
+        border-radius: 12px;
+        background: var(--sun);
+        color: #1a1202;
+        padding: 10px 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 24px rgba(245, 158, 11, 0.25);
+      }
+
+      .ghost {
+        background: transparent;
+        border: 1px solid var(--line);
+        color: var(--ink);
+      }
+
+      .row {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      }
+
+      .builder-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      }
+
+      .library-grid {
+        display: grid;
+        gap: 18px;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      }
+
+      .list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .param-field {
+        display: grid;
+        gap: 6px;
+      }
+
+      .param-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 10px;
+      }
+
+      .param-body {
+        display: grid;
+        grid-template-columns: 140px 520px minmax(200px, 1fr);
+        gap: 12px;
+        align-items: center;
+      }
+
+      .param-control {
+        display: grid;
+        gap: 8px;
+        width: 100%;
+      }
+
+      .param-info {
+        font-size: 12px;
+        color: var(--ink-soft);
+        display: grid;
+        gap: 6px;
+      }
+
+      .param-info strong {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .param-default {
+        font-size: 12px;
+        color: var(--ink-soft);
+        background: rgba(15, 27, 43, 0.06);
+        padding: 4px 8px;
+        border-radius: 999px;
+      }
+
+      .param-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        justify-content: flex-end;
+        min-width: 160px;
+      }
+
+      .param-reset-cell {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: flex-start;
+        width: 140px;
+        gap: 6px;
+      }
+
+      .param-reset {
+        padding: 4px 10px;
+        font-size: 12px;
+      }
+
+      .param-meta {
+        font-size: 11px;
+        color: var(--ink-soft);
+      }
+
+      .param-description {
+        font-size: 12px;
+        color: var(--ink-soft);
+      }
+
+      .toggle-group {
+        display: inline-flex;
+        gap: 6px;
+        background: rgba(15, 27, 43, 0.04);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 4px;
+        flex-wrap: wrap;
+      }
+
+      .toggle-button {
+        border-radius: 999px;
+        border: 1px solid transparent;
+        background: transparent;
+        padding: 6px 12px;
+        font-size: 13px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .toggle-button.active {
+        background: var(--sage);
+        color: #fff;
+        box-shadow: 0 6px 12px rgba(31, 122, 116, 0.25);
+      }
+
+      .param-range {
+        width: 100%;
+      }
+
+      .param-range-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) max-content;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .inline-buttons {
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .input-ghost {
+        background: rgba(255, 255, 255, 0.8);
+      }
+
+      .param-number {
+        min-width: 3ch;
+        width: 6ch;
+        max-width: 6ch;
+        text-align: right;
+      }
+
+      .list-item {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .list-item strong {
+        font-size: 14px;
+      }
+
+      .badge {
+        font-size: 12px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: rgba(31, 122, 116, 0.12);
+        color: var(--sage);
+      }
+
+      .status {
+        margin-top: 12px;
+        font-size: 13px;
+        color: var(--ink-soft);
+      }
+
+      .status.error {
+        color: #a12e2e;
+      }
+
+      .mono {
+        font-family: "Courier New", monospace;
+        background: #0f1b2b;
+        color: #fcefd6;
+        padding: 12px;
+        border-radius: 12px;
+        font-size: 12px;
+        overflow-x: auto;
+      }
+
+      details.card {
+        padding: 0;
+      }
+
+      details.card > summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 20px;
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      details.card > summary::-webkit-details-marker {
+        display: none;
+      }
+
+      details.card > summary::after {
+        content: "+";
+        font-size: 20px;
+        color: var(--ink-soft);
+      }
+
+      details.card[open] > summary::after {
+        content: "-";
+      }
+
+      details.card[open] > summary {
+        border-bottom: 1px solid var(--line);
+      }
+
+      .collapse-body {
+        padding: 20px;
+      }
+
+      .hint {
+        font-size: 12px;
+        color: var(--ink-soft);
+      }
+
+      .copy-field {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .copy-field-wide {
+        grid-template-columns: minmax(0, 1fr) auto auto;
+      }
+
+      .param-default {
+        display: inline-flex;
+        width: fit-content;
+        max-width: 100%;
+        align-self: flex-start;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .copy-button {
+        padding: 6px 10px;
+        font-size: 12px;
+      }
+
+      .copy-status {
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--ink-soft);
+      }
+
+      @media (min-width: 900px) {
+        .library-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 900px) {
+        .param-body {
+          grid-template-columns: 120px minmax(0, 1fr);
+        }
+
+        .param-info {
+          grid-column: 1 / -1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1 class="title">Voice Manager</h1>
+        <p class="subtitle">
+          Build reusable voice samples and presets for Ultimate TTS Studio, then
+          point OpenWebUI at a clean, OpenAI-style TTS API.
+        </p>
+        <div class="pill-row">
+          <div class="pill">Store voice clips locally</div>
+          <div class="pill">Preset per engine</div>
+          <div class="pill">Copy-ready OpenWebUI hints</div>
+        </div>
+      </header>
+
+      <div class="library-grid" style="margin-top: 20px;">
+        <details class="card">
+          <summary>Voice Vault</summary>
+          <div class="collapse-body">
+            <form id="voiceForm">
+              <label for="voiceName">Voice name</label>
+              <input id="voiceName" placeholder="matt" />
+              <label for="voiceFile">Reference audio (wav or mp3)</label>
+              <input id="voiceFile" type="file" accept=".wav,.mp3,.flac,.m4a,.ogg" />
+              <div class="row">
+                <button type="submit">Save voice sample</button>
+                <button type="button" class="ghost" id="refreshVoices">Refresh list</button>
+              </div>
+            </form>
+            <div class="status" id="voiceStatus"></div>
+            <div class="list" id="voiceList"></div>
+          </div>
+        </details>
+
+        <details class="card">
+          <summary>Preset Library</summary>
+          <div class="collapse-body">
+            <div class="list" id="presetList"></div>
+          </div>
+        </details>
+      </div>
+
+      <section class="card" style="margin-top: 20px;">
+        <h2>Preset Builder</h2>
+        <div class="builder-grid">
+          <div>
+            <label for="presetVoiceSample">Saved voice sample</label>
+            <select id="presetVoiceSample"></select>
+            <div class="hint" id="voiceSampleHint"></div>
+          </div>
+          <div>
+            <label for="presetName">Preset name</label>
+            <input id="presetName" placeholder="Matt" />
+            <div class="hint" id="presetNameHint">Auto-fills from the voice label. Engine stays separate.</div>
+          </div>
+          <div>
+            <label for="presetEngine">Engine</label>
+            <select id="presetEngine"></select>
+          </div>
+          <div>
+            <label for="presetVoiceChoice">Engine voice option</label>
+            <select id="presetVoiceChoice"></select>
+            <div class="hint" id="voiceChoiceHint"></div>
+          </div>
+        </div>
+        <div class="builder-grid" style="margin-top: 12px;">
+          <div>
+            <label for="presetEmotionSample">Emotion reference sample (optional)</label>
+            <select id="presetEmotionSample"></select>
+            <div class="hint" id="emotionSampleHint"></div>
+          </div>
+          <div>
+            <label for="gradioUrl">Gradio target</label>
+            <input id="gradioUrl" class="input-ghost" />
+            <div class="inline-buttons" style="margin-top: 8px;">
+              <button type="button" class="ghost" id="reconnectGradio">Reconnect</button>
+              <button type="button" id="updateGradio">Set target</button>
+            </div>
+          </div>
+        </div>
+        <div class="status" id="gradioStatus"></div>
+        <div class="status" id="engineStatus"></div>
+        <div style="margin-top: 12px;">
+          <label>Engine parameters</label>
+          <div class="list" id="paramForm"></div>
+          <div class="row" style="margin-top: 10px;">
+            <button id="resetParams" type="button" class="ghost">Reset defaults</button>
+          </div>
+        </div>
+        <div style="margin-top: 12px;">
+          <label for="presetParams">Additional overrides (JSON, optional)</label>
+          <textarea id="presetParams" placeholder="{\"indextts2_temperature\": 0.7, \"indextts2_seed\": 42}"></textarea>
+        </div>
+        <div class="row" style="margin-top: 12px;">
+          <button id="savePreset" type="button">Save preset</button>
+          <button id="clearPreset" type="button" class="ghost">Clear</button>
+        </div>
+        <div class="status" id="presetStatus"></div>
+      </section>
+
+      <section class="card" style="margin-top: 20px;">
+        <h2>API Cheat Sheet</h2>
+        <div class="row">
+          <div>
+            <label>Base URL</label>
+            <div class="copy-field">
+              <input id="baseUrl" readonly />
+              <button class="ghost copy-button" type="button" data-copy-target="baseUrl">Copy</button>
+            </div>
+          </div>
+          <div>
+            <label>API Key</label>
+            <div class="copy-field copy-field-wide">
+              <input id="apiKey" readonly />
+              <button class="ghost copy-button" type="button" data-copy-target="apiKey">Copy</button>
+              <button class="ghost copy-button" type="button" id="generateApiKey">Generate</button>
+            </div>
+          </div>
+          <div>
+            <label>Model</label>
+            <div class="copy-field">
+              <input id="cheatModel" readonly />
+              <button class="ghost copy-button" type="button" data-copy-target="cheatModel">Copy</button>
+            </div>
+          </div>
+          <div>
+            <label>Voice</label>
+            <div class="copy-field">
+              <input id="cheatVoice" readonly />
+              <button class="ghost copy-button" type="button" data-copy-target="cheatVoice">Copy</button>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top: 12px;">
+          <div class="param-header">
+            <label>POST /v1/audio/speech</label>
+            <button class="ghost copy-button" type="button" data-copy-target="curlExample">Copy curl</button>
+          </div>
+          <pre class="mono" id="curlExample"></pre>
+        </div>
+        <div style="margin-top: 12px;">
+          <div class="param-header">
+            <label>GET /v1/models</label>
+            <button class="ghost copy-button" type="button" data-copy-target="modelsExample">Copy curl</button>
+          </div>
+          <pre class="mono" id="modelsExample"></pre>
+        </div>
+        <div style="margin-top: 12px;">
+          <div class="param-header">
+            <label>GET /v1/audio/voices</label>
+            <button class="ghost copy-button" type="button" data-copy-target="voicesExample">Copy curl</button>
+          </div>
+          <pre class="mono" id="voicesExample"></pre>
+        </div>
+        <div class="copy-status" id="cheatStatus"></div>
+      </section>
+    </div>
+
+    <script>
+      const state = {
+        engines: [],
+        voices: [],
+        presets: [],
+        voiceChoices: { choices: [], param: "" },
+        paramDefaults: {},
+        apiKey: ""
+      };
+
+      const engineStatus = document.getElementById("engineStatus");
+      const gradioUrl = document.getElementById("gradioUrl");
+      const gradioStatus = document.getElementById("gradioStatus");
+      const reconnectGradioBtn = document.getElementById("reconnectGradio");
+      const updateGradioBtn = document.getElementById("updateGradio");
+
+      const voiceForm = document.getElementById("voiceForm");
+      const voiceStatus = document.getElementById("voiceStatus");
+      const voiceList = document.getElementById("voiceList");
+      const refreshVoicesBtn = document.getElementById("refreshVoices");
+
+      const presetName = document.getElementById("presetName");
+      const presetNameHint = document.getElementById("presetNameHint");
+      const presetEngine = document.getElementById("presetEngine");
+      const presetVoiceSample = document.getElementById("presetVoiceSample");
+      const voiceSampleHint = document.getElementById("voiceSampleHint");
+      const presetVoiceChoice = document.getElementById("presetVoiceChoice");
+      const voiceChoiceHint = document.getElementById("voiceChoiceHint");
+      const presetEmotionSample = document.getElementById("presetEmotionSample");
+      const emotionSampleHint = document.getElementById("emotionSampleHint");
+      const paramForm = document.getElementById("paramForm");
+      const resetParamsBtn = document.getElementById("resetParams");
+      const presetParams = document.getElementById("presetParams");
+      const presetStatus = document.getElementById("presetStatus");
+      const presetList = document.getElementById("presetList");
+      const savePresetBtn = document.getElementById("savePreset");
+      const clearPresetBtn = document.getElementById("clearPreset");
+
+      const baseUrl = document.getElementById("baseUrl");
+      const apiKey = document.getElementById("apiKey");
+      const generateApiKeyBtn = document.getElementById("generateApiKey");
+      const cheatModel = document.getElementById("cheatModel");
+      const cheatVoice = document.getElementById("cheatVoice");
+      const curlExample = document.getElementById("curlExample");
+      const modelsExample = document.getElementById("modelsExample");
+      const voicesExample = document.getElementById("voicesExample");
+      const cheatStatus = document.getElementById("cheatStatus");
+
+      const requiredRefEngines = new Set(["IndexTTS2"]);
+      let autoNameEnabled = true;
+      let lastAutoName = "";
+
+      function setStatus(el, message, isError) {
+        el.textContent = message || "";
+        el.classList.toggle("error", Boolean(isError));
+      }
+
+      function slugify(value) {
+        return (value || "")
+          .toString()
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9_-]+/g, "-")
+          .replace(/-{2,}/g, "-")
+          .replace(/(^-|-$)/g, "");
+      }
+
+      function buildPresetId(label, engine) {
+        const base = slugify(label);
+        const enginePart = slugify(engine || "");
+        if (!base || !enginePart) return "";
+        return `${base}-${enginePart}`;
+      }
+
+      function formatDefaultValue(value) {
+        if (value === null || value === undefined || value === "") {
+          return "blank";
+        }
+        if (typeof value === "boolean") {
+          return value ? "true" : "false";
+        }
+        return String(value);
+      }
+
+      function coerceInputValue(value, pythonType) {
+        if (value === "" || value === null || value === undefined) {
+          return null;
+        }
+        if (pythonType === "bool") {
+          if (typeof value === "boolean") return value;
+          const lowered = String(value).trim().toLowerCase();
+          return ["1", "true", "yes", "on"].includes(lowered);
+        }
+        if (pythonType === "int") {
+          const num = Number(value);
+          return Number.isFinite(num) ? Math.round(num) : value;
+        }
+        if (pythonType === "float") {
+          const num = Number(value);
+          return Number.isFinite(num) ? num : value;
+        }
+        return value;
+      }
+
+      async function fetchJson(url, options = {}) {
+        const res = await fetch(url, options);
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || res.statusText);
+        }
+        return res.json();
+      }
+
+      function optionList(select, values, placeholder) {
+        select.innerHTML = "";
+        if (placeholder) {
+          const opt = document.createElement("option");
+          opt.value = "";
+          opt.textContent = placeholder;
+          select.appendChild(opt);
+        }
+        values.forEach((value) => {
+          const opt = document.createElement("option");
+          opt.value = value;
+          opt.textContent = value;
+          select.appendChild(opt);
+        });
+      }
+
+      function renderParamForm(params) {
+        paramForm.innerHTML = "";
+        state.paramDefaults = {};
+        if (!params.length) {
+          paramForm.innerHTML = "<div class=\"hint\">No parameters found for this engine.</div>";
+          return;
+        }
+        params.forEach((param) => {
+          if (param.is_file) {
+            return;
+          }
+          const name = param.name;
+          const component = param.component || "";
+          const choices = Array.isArray(param.choices) ? param.choices : [];
+          state.paramDefaults[name] = param.default;
+
+          const wrapper = document.createElement("div");
+          wrapper.className = "list-item param-field";
+
+          const header = document.createElement("div");
+          header.className = "param-header";
+
+          const label = document.createElement("label");
+          label.textContent = param.label || name;
+          label.htmlFor = `param-${name}`;
+          label.title = name;
+
+          const resetBtn = document.createElement("button");
+          resetBtn.type = "button";
+          resetBtn.className = "ghost param-reset";
+          resetBtn.textContent = "Reset";
+
+          const defaultTag = document.createElement("span");
+          defaultTag.className = "param-default";
+          defaultTag.textContent = `Default: ${formatDefaultValue(param.default)}`;
+
+          header.appendChild(label);
+          wrapper.appendChild(header);
+
+          let input;
+          let control;
+          const controlWrap = document.createElement("div");
+          controlWrap.className = "param-control";
+          if (name === "audio_format") {
+            input = document.createElement("select");
+            ["wav", "mp3"].forEach((value) => {
+              const opt = document.createElement("option");
+              opt.value = value;
+              opt.textContent = value;
+              input.appendChild(opt);
+            });
+            controlWrap.appendChild(input);
+            control = controlWrap;
+          } else if (choices.length && choices.length <= 3) {
+            input = document.createElement("input");
+            input.type = "hidden";
+            input.dataset.kind = "toggle";
+            const toggleGroup = document.createElement("div");
+            toggleGroup.className = "toggle-group";
+            choices.forEach((value) => {
+              const btn = document.createElement("button");
+              btn.type = "button";
+              btn.className = "toggle-button";
+              btn.textContent = value;
+              btn.addEventListener("click", () => {
+                applyParamValue(input, value);
+                updateToggleGroup(input);
+              });
+              toggleGroup.appendChild(btn);
+            });
+            input._toggleGroup = toggleGroup;
+            controlWrap.appendChild(toggleGroup);
+            control = controlWrap;
+          } else if (choices.length) {
+            input = document.createElement("select");
+            choices.forEach((value) => {
+              const opt = document.createElement("option");
+              opt.value = value;
+              opt.textContent = value;
+              input.appendChild(opt);
+            });
+            controlWrap.appendChild(input);
+            control = controlWrap;
+          } else if (component === "Checkbox") {
+            input = document.createElement("input");
+            input.type = "checkbox";
+            controlWrap.appendChild(input);
+            control = controlWrap;
+          } else if (
+            component === "Slider" ||
+            component === "Number" ||
+            param.type === "number" ||
+            param.python_type === "float" ||
+            param.python_type === "int"
+          ) {
+            const hasRange = Number.isFinite(param.min) && Number.isFinite(param.max);
+            input = document.createElement("input");
+            input.type = "number";
+            input.className = "param-number";
+            if (Number.isFinite(param.min)) {
+              input.min = String(param.min);
+            }
+            if (Number.isFinite(param.max)) {
+              input.max = String(param.max);
+            }
+            if (Number.isFinite(param.step)) {
+              input.step = String(param.step);
+            } else if (param.python_type === "int") {
+              input.step = "1";
+            } else {
+              input.step = "any";
+            }
+
+          if (hasRange) {
+            const rangeInput = document.createElement("input");
+            rangeInput.type = "range";
+            rangeInput.className = "param-range";
+              rangeInput.min = String(param.min);
+              rangeInput.max = String(param.max);
+              if (Number.isFinite(param.step)) {
+                rangeInput.step = String(param.step);
+              } else if (param.python_type === "int") {
+                rangeInput.step = "1";
+              } else {
+                rangeInput.step = "0.01";
+              }
+              rangeInput.addEventListener("input", () => {
+                input.value = rangeInput.value;
+              });
+              input.addEventListener("input", () => {
+                if (input.value !== "") {
+                  rangeInput.value = input.value;
+                }
+              });
+              input._rangeInput = rangeInput;
+            const rangeRow = document.createElement("div");
+            rangeRow.className = "param-range-row";
+            rangeRow.appendChild(rangeInput);
+            rangeRow.appendChild(input);
+            controlWrap.appendChild(rangeRow);
+            control = controlWrap;
+          } else {
+            controlWrap.appendChild(input);
+            control = controlWrap;
+          }
+        } else {
+          input = document.createElement("input");
+          input.type = "text";
+          controlWrap.appendChild(input);
+          control = controlWrap;
+        }
+
+        input.id = `param-${name}`;
+        input.dataset.param = name;
+        input.dataset.component = component;
+          if (param.python_type) {
+            input.dataset.pythonType = param.python_type;
+          }
+
+          applyParamValue(input, param.default);
+          if (input.dataset.kind === "toggle") {
+            updateToggleGroup(input);
+          }
+
+          resetBtn.addEventListener("click", () => {
+            applyParamValue(input, param.default);
+            if (input.dataset.kind === "toggle") {
+              updateToggleGroup(input);
+            }
+          });
+
+          const info = document.createElement("div");
+          info.className = "param-info";
+          if (param.description) {
+            const description = document.createElement("div");
+            description.className = "param-description";
+            description.textContent = param.description;
+            info.appendChild(description);
+          }
+
+          const hintParts = [];
+          if (Number.isFinite(param.min) && Number.isFinite(param.max)) {
+            hintParts.push(`Range: ${param.min} - ${param.max}`);
+          }
+          if (choices.length > 3) {
+            hintParts.push(`Options: ${choices.join(", ")}`);
+          }
+          if (hintParts.length) {
+            const meta = document.createElement("div");
+            meta.className = "param-meta";
+            meta.textContent = hintParts.join(" - ");
+            info.appendChild(meta);
+          }
+
+          const body = document.createElement("div");
+          body.className = "param-body";
+          const resetCell = document.createElement("div");
+          resetCell.className = "param-reset-cell";
+          if (input.type !== "hidden") {
+            resetCell.appendChild(defaultTag);
+          }
+          resetCell.appendChild(resetBtn);
+          body.appendChild(resetCell);
+          if (control) {
+            body.appendChild(control);
+          }
+          if (info.childNodes.length) {
+            body.appendChild(info);
+          }
+          wrapper.appendChild(body);
+
+          if (input.type === "hidden") {
+            wrapper.appendChild(input);
+          }
+
+          paramForm.appendChild(wrapper);
+        });
+      }
+
+      function applyParamValue(input, value) {
+        if (input.type === "checkbox") {
+          input.checked = Boolean(value);
+          return;
+        }
+        if (value === null || value === undefined) {
+          input.value = "";
+        } else {
+          input.value = String(value);
+        }
+        if (input._rangeInput && input.value !== "") {
+          input._rangeInput.value = input.value;
+        }
+      }
+
+      function updateToggleGroup(input) {
+        const group = input._toggleGroup;
+        if (!group) return;
+        const buttons = group.querySelectorAll("button");
+        buttons.forEach((button) => {
+          const isActive = button.textContent === input.value;
+          button.classList.toggle("active", isActive);
+        });
+      }
+
+      function collectParamValues() {
+        const values = {};
+        const inputs = paramForm.querySelectorAll("[data-param]");
+        inputs.forEach((input) => {
+          const name = input.dataset.param;
+          const pythonType = input.dataset.pythonType || "";
+          if (input.type === "checkbox") {
+            values[name] = input.checked;
+          } else if (input.type === "number") {
+            values[name] = input.value === "" ? null : Number(input.value);
+          } else {
+            values[name] = input.value;
+          }
+          values[name] = coerceInputValue(values[name], pythonType);
+        });
+        return values;
+      }
+
+      function diffParams(values, defaults) {
+        const diff = {};
+        Object.keys(values).forEach((key) => {
+          const current = values[key];
+          const fallback = defaults[key];
+          if (fallback === undefined || !Object.is(current, fallback)) {
+            diff[key] = current;
+          }
+        });
+        return diff;
+      }
+
+      function resetParamForm() {
+        const inputs = paramForm.querySelectorAll("[data-param]");
+        inputs.forEach((input) => {
+          const name = input.dataset.param;
+          applyParamValue(input, state.paramDefaults[name]);
+          if (input.dataset.kind === "toggle") {
+            updateToggleGroup(input);
+          }
+        });
+      }
+
+      function renderVoices() {
+        voiceList.innerHTML = "";
+        if (!state.voices.length) {
+          voiceList.innerHTML = "<div class=\"hint\">No saved voices yet.</div>";
+          return;
+        }
+        state.voices.forEach((voice) => {
+          const item = document.createElement("div");
+          item.className = "list-item";
+          item.innerHTML = `
+            <div>
+              <strong>${voice.label}</strong>
+              <div class="hint">${voice.filename}</div>
+            </div>
+            <button data-id="${voice.id}" class="ghost">Delete</button>
+          `;
+          item.querySelector("button").addEventListener("click", () => deleteVoice(voice.id));
+          voiceList.appendChild(item);
+        });
+      }
+
+      function renderPresets() {
+        presetList.innerHTML = "";
+        if (!state.presets.length) {
+          presetList.innerHTML = "<div class=\"hint\">No presets saved yet.</div>";
+          return;
+        }
+        state.presets.forEach((preset) => {
+          const label = preset.label || preset.name;
+          const item = document.createElement("div");
+          item.className = "list-item";
+          item.innerHTML = `
+            <div>
+              <strong>${label}</strong>
+              <div class="hint">${preset.engine}</div>
+            </div>
+            <div class="row" style="grid-template-columns: repeat(2, minmax(0, 1fr));">
+              <button data-use="${preset.name}" class="ghost">Load</button>
+              <button data-delete="${preset.name}" class="ghost">Delete</button>
+            </div>
+          `;
+          item.querySelector("[data-use]").addEventListener("click", () => loadPreset(preset.name));
+          item.querySelector("[data-delete]").addEventListener("click", () => deletePreset(preset.name));
+          presetList.appendChild(item);
+        });
+      }
+
+      function findVoiceLabel(voiceId) {
+        if (!voiceId) return "";
+        const voice = state.voices.find((item) => item.id === voiceId);
+        return voice ? voice.label : voiceId;
+      }
+
+      function buildAutoPresetName() {
+        const voiceId = presetVoiceSample.value;
+        if (!voiceId) return "";
+        return findVoiceLabel(voiceId);
+      }
+
+      function applyAutoPresetName(force = false) {
+        const candidate = buildAutoPresetName();
+        if (!candidate) return;
+        if (!autoNameEnabled && !force) return;
+        presetName.value = candidate;
+        lastAutoName = candidate;
+        updateCheatSheet();
+      }
+
+      function updateCheatSheet() {
+        const engine = presetEngine.value || "";
+        const voice = presetName.value || "";
+        const base = window.location.origin + "/v1";
+        const authHeader = state.apiKey ? `  -H \"Authorization: Bearer ${state.apiKey}\" \\\n` : "";
+        baseUrl.value = base;
+        apiKey.value = state.apiKey || "";
+        cheatModel.value = engine || "(select engine)";
+        cheatVoice.value = voice || "(preset name)";
+        curlExample.textContent = `curl -X POST ${base}/audio/speech \\\n  -H \"Content-Type: application/json\" \\\n${authHeader}  -d '{\"input\":\"Hello\",\"model\":\"${engine || "Chatterbox Turbo"}\",\"voice\":\"${voice || "preset-name"}\",\"response_format\":\"mp3\"}' \\\n  --output out.mp3`;
+        modelsExample.textContent = state.apiKey
+          ? `curl -H \"Authorization: Bearer ${state.apiKey}\" ${base}/models`
+          : `curl ${base}/models`;
+        voicesExample.textContent = state.apiKey
+          ? `curl -H \"Authorization: Bearer ${state.apiKey}\" ${base}/audio/voices`
+          : `curl ${base}/audio/voices`;
+      }
+
+      async function copyText(value) {
+        if (!value) return false;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(value);
+          return true;
+        }
+        const field = document.createElement("textarea");
+        field.value = value;
+        field.setAttribute("readonly", "");
+        field.style.position = "absolute";
+        field.style.left = "-9999px";
+        document.body.appendChild(field);
+        field.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(field);
+        return ok;
+      }
+
+      function setCheatStatus(message, isError) {
+        if (!cheatStatus) return;
+        cheatStatus.textContent = message || "";
+        cheatStatus.style.color = isError ? "#a12e2e" : "";
+      }
+
+      function setGradioStatus(message, connected) {
+        if (connected === false) {
+          setStatus(gradioStatus, message || "Gradio is not reachable yet.", true);
+          return;
+        }
+        const display = message && message !== "Loaded from Gradio metadata."
+          ? message
+          : "Gradio connected.";
+        setStatus(gradioStatus, display, false);
+      }
+
+      async function refreshGradioStatus() {
+        const data = await fetchJson("/v1/tts/gradio");
+        gradioUrl.value = data.gradio_url || "";
+        setGradioStatus(data.message || "", data.connected);
+      }
+
+      async function refreshEngines() {
+        const data = await fetchJson("/v1/tts/engines");
+        state.engines = data.engines || [];
+        optionList(presetEngine, state.engines);
+        presetEngine.value = state.engines[0] || "";
+        await refreshParamSummary(presetEngine.value);
+        await refreshParamForm(presetEngine.value);
+        await refreshVoiceChoices(presetEngine.value);
+        updateCheatSheet();
+      }
+
+      async function refreshParamSummary(engine) {
+        if (!engine) return;
+        const data = await fetchJson(`/v1/tts/params?engine=${encodeURIComponent(engine)}`);
+        if (data.connected === false) {
+          setStatus(engineStatus, data.message || "Gradio metadata not available.", true);
+        } else {
+          setStatus(engineStatus, "");
+        }
+        if (data.gradio_url) {
+          gradioUrl.value = data.gradio_url;
+        }
+        setGradioStatus(data.message || "", data.connected);
+      }
+
+      async function refreshParamForm(engine) {
+        if (!engine) return;
+        const data = await fetchJson(`/v1/tts/params?engine=${encodeURIComponent(engine)}`);
+        renderParamForm(data.params || []);
+        if (data.gradio_url) {
+          gradioUrl.value = data.gradio_url;
+        }
+        setGradioStatus(data.message || "", data.connected);
+      }
+
+      async function refreshVoiceChoices(engine) {
+        if (!engine) return;
+        const data = await fetchJson(`/v1/tts/voice-choices?engine=${encodeURIComponent(engine)}`);
+        state.voiceChoices = data;
+        optionList(presetVoiceChoice, data.choices || [], data.choices?.length ? "Pick a voice" : "No choices");
+        voiceChoiceHint.textContent = data.param ? `Sets ${data.param}` : "No fixed voices for this engine.";
+        voiceSampleHint.textContent = requiredRefEngines.has(engine)
+          ? "Required for this engine."
+          : "Optional.";
+        emotionSampleHint.textContent = engine === "IndexTTS2"
+          ? "Used when emotion mode is audio_reference."
+          : "Not used by this engine.";
+      }
+
+      async function refreshVoices() {
+        const data = await fetchJson("/v1/tts/voices");
+        state.voices = data.voices || [];
+        optionList(presetVoiceSample, state.voices.map((v) => v.id), "No sample");
+        optionList(presetEmotionSample, state.voices.map((v) => v.id), "No sample");
+        renderVoices();
+        applyAutoPresetName();
+      }
+
+      async function refreshPresets() {
+        const data = await fetchJson("/v1/tts/presets");
+        state.presets = data.presets || [];
+        renderPresets();
+      }
+
+      async function refreshApiKey() {
+        const data = await fetchJson("/v1/tts/api-key");
+        state.apiKey = data.api_key || "";
+        updateCheatSheet();
+      }
+
+      async function generateApiKey() {
+        const data = await fetchJson("/v1/tts/api-key/generate", { method: "POST" });
+        state.apiKey = data.api_key || "";
+        updateCheatSheet();
+        setCheatStatus(state.apiKey ? "API key generated." : "API key cleared.");
+      }
+
+      async function reconnectGradio() {
+        try {
+          const data = await fetchJson("/v1/tts/gradio/reload", { method: "POST" });
+          gradioUrl.value = data.gradio_url || gradioUrl.value;
+          setGradioStatus(data.message || "", data.connected);
+          await refreshParamSummary(presetEngine.value);
+          await refreshParamForm(presetEngine.value);
+          await refreshVoiceChoices(presetEngine.value);
+        } catch (err) {
+          setGradioStatus(err.message, false);
+        }
+      }
+
+      async function updateGradioTarget() {
+        const url = gradioUrl.value.trim();
+        if (!url) {
+          setStatus(gradioStatus, "Enter a Gradio URL first.", true);
+          return;
+        }
+        try {
+          const data = await fetchJson("/v1/tts/gradio", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url })
+          });
+          gradioUrl.value = data.gradio_url || url;
+          setGradioStatus(data.message || "", data.connected);
+          await refreshParamSummary(presetEngine.value);
+          await refreshParamForm(presetEngine.value);
+          await refreshVoiceChoices(presetEngine.value);
+        } catch (err) {
+          setGradioStatus(err.message, false);
+        }
+      }
+
+      async function deleteVoice(voiceId) {
+        try {
+          await fetchJson(`/v1/tts/voices/${encodeURIComponent(voiceId)}`, { method: "DELETE" });
+          await refreshVoices();
+        } catch (err) {
+          setStatus(voiceStatus, err.message, true);
+        }
+      }
+
+      async function deletePreset(name) {
+        try {
+          await fetchJson(`/v1/tts/presets/${encodeURIComponent(name)}`, { method: "DELETE" });
+          await refreshPresets();
+        } catch (err) {
+          setStatus(presetStatus, err.message, true);
+        }
+      }
+
+      async function loadPreset(name) {
+        const preset = state.presets.find((p) => p.name === name);
+        if (!preset) return;
+        presetName.value = preset.label || preset.name;
+        autoNameEnabled = false;
+        lastAutoName = preset.label || preset.name;
+        presetEngine.value = preset.engine;
+        await refreshParamSummary(preset.engine);
+        await refreshParamForm(preset.engine);
+        await refreshVoiceChoices(preset.engine);
+        presetVoiceSample.value = preset.voice_id || "";
+        resetParamForm();
+        const storedParams = preset.params || {};
+        const inputs = paramForm.querySelectorAll("[data-param]");
+        inputs.forEach((input) => {
+          const name = input.dataset.param;
+          if (Object.prototype.hasOwnProperty.call(storedParams, name)) {
+            applyParamValue(input, storedParams[name]);
+          }
+        });
+        if (storedParams.indextts2_emotion_audio) {
+          presetEmotionSample.value = storedParams.indextts2_emotion_audio;
+        } else {
+          presetEmotionSample.value = "";
+        }
+        presetParams.value = "";
+        updateCheatSheet();
+      }
+
+      voiceForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const file = document.getElementById("voiceFile").files[0];
+        if (!file) {
+          setStatus(voiceStatus, "Pick a file first.", true);
+          return;
+        }
+        const formData = new FormData();
+        formData.append("name", document.getElementById("voiceName").value);
+        formData.append("file", file);
+        try {
+          await fetchJson("/v1/tts/voices", { method: "POST", body: formData });
+          document.getElementById("voiceName").value = "";
+          document.getElementById("voiceFile").value = "";
+          setStatus(voiceStatus, "Voice sample saved.");
+          await refreshVoices();
+        } catch (err) {
+          setStatus(voiceStatus, err.message, true);
+        }
+      });
+
+      refreshVoicesBtn.addEventListener("click", refreshVoices);
+      resetParamsBtn.addEventListener("click", resetParamForm);
+      reconnectGradioBtn.addEventListener("click", reconnectGradio);
+      updateGradioBtn.addEventListener("click", updateGradioTarget);
+      generateApiKeyBtn.addEventListener("click", generateApiKey);
+
+      presetEngine.addEventListener("change", async () => {
+        await refreshParamForm(presetEngine.value);
+        await refreshVoiceChoices(presetEngine.value);
+        await refreshParamSummary(presetEngine.value);
+        applyAutoPresetName();
+        updateCheatSheet();
+      });
+
+      presetVoiceSample.addEventListener("change", () => {
+        applyAutoPresetName();
+        updateCheatSheet();
+      });
+
+      presetName.addEventListener("input", () => {
+        const trimmed = presetName.value.trim();
+        if (!trimmed) {
+          autoNameEnabled = true;
+        } else if (trimmed !== lastAutoName) {
+          autoNameEnabled = false;
+        }
+        updateCheatSheet();
+      });
+
+      presetEngine.addEventListener("input", updateCheatSheet);
+
+      savePresetBtn.addEventListener("click", async () => {
+        const label = presetName.value.trim();
+        if (!label) {
+          setStatus(presetStatus, "Preset name is required.", true);
+          return;
+        }
+        const engine = presetEngine.value;
+        const name = buildPresetId(label, engine);
+        if (!name) {
+          setStatus(presetStatus, "Select an engine to continue.", true);
+          return;
+        }
+        const voiceId = presetVoiceSample.value || null;
+        if (requiredRefEngines.has(engine) && !voiceId) {
+          setStatus(presetStatus, "This engine requires a saved voice sample.", true);
+          return;
+        }
+        let params = diffParams(collectParamValues(), state.paramDefaults);
+        if (presetParams.value.trim()) {
+          try {
+            const extra = JSON.parse(presetParams.value);
+            params = { ...params, ...extra };
+          } catch (err) {
+            setStatus(presetStatus, "Params must be valid JSON.", true);
+            return;
+          }
+        }
+        if (state.voiceChoices.param && presetVoiceChoice.value) {
+          params[state.voiceChoices.param] = presetVoiceChoice.value;
+        }
+        if (presetEmotionSample.value && engine === "IndexTTS2") {
+          params.indextts2_emotion_audio = presetEmotionSample.value;
+        }
+        const existing = state.presets.find((preset) => preset.name === name);
+        const overwrite = existing
+          ? window.confirm(`Preset "${label}" already exists for this engine. Replace it?`)
+          : false;
+        if (existing && !overwrite) {
+          return;
+        }
+        const payload = { name, label, engine, voice_id: voiceId, params, overwrite };
+        try {
+          await fetchJson("/v1/tts/presets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          setStatus(presetStatus, "Preset saved.");
+          await refreshPresets();
+          updateCheatSheet();
+        } catch (err) {
+          setStatus(presetStatus, err.message, true);
+        }
+      });
+
+      clearPresetBtn.addEventListener("click", () => {
+        presetName.value = "";
+        presetParams.value = "";
+        presetVoiceSample.value = "";
+        presetVoiceChoice.value = "";
+        presetEmotionSample.value = "";
+        resetParamForm();
+        setStatus(presetStatus, "");
+        autoNameEnabled = true;
+        lastAutoName = "";
+        applyAutoPresetName();
+        updateCheatSheet();
+      });
+
+      async function bootstrap() {
+        baseUrl.value = window.location.origin + "/v1";
+        try {
+          await refreshApiKey();
+          await refreshGradioStatus();
+          await refreshEngines();
+          await refreshVoices();
+          await refreshPresets();
+        } catch (err) {
+          setStatus(engineStatus, err.message, true);
+        }
+        updateCheatSheet();
+      }
+
+      bootstrap();
+
+      document.querySelectorAll("[data-copy-target]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const target = button.dataset.copyTarget;
+          const el = document.getElementById(target);
+          const text = el ? (el.value || el.textContent || "") : "";
+          try {
+            const ok = await copyText(text);
+            if (ok) {
+              setCheatStatus("Copied to clipboard.");
+            } else {
+              setCheatStatus("Copy failed.", true);
+            }
+          } catch (err) {
+            setCheatStatus("Copy failed.", true);
+          }
+          window.setTimeout(() => setCheatStatus(""), 2000);
+        });
+      });
+    </script>
+  </body>
+</html>
+
+
