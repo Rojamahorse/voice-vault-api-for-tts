@@ -370,7 +370,7 @@ logs/
 - If you are starting with existing script files, before modifying, creating, or removing any script files, first look at `pinokio.js` to understand which script files are actually used in the launcher. The only script files used are the ones mentioned in the `pinokio.js` file. The `pinokio.js` file is the file that constructs the UI dynamically.
 - Do not create a redundant script file that does something that already exists. Instead modify the existing script file for the feature. For example, do not create an `install.json` file for installation if `install.js` already exists. Instead, modify the `install.js` file.
 - Pinokio accepts both JSON and JS script files, so when determining whether a script for a specific purpose already exists, check both JSON and JS files mentioned in the `pinokio.js` file. Do not create script files for rendundant purpose.
-- When building launchers for existing projects cloned from a repository, try to stay away from modifying the project folder (the `F:\pinokio\api\api-for-tts.git` folder), even if installations are failing. Instead, try to work around it by creating additional files in the launcher folder, and using those files IN ADDITION to the default project.
+- When building launchers for existing projects cloned from a repository, try to stay away from modifying the project folder (the `F:\pinokio\api\voice-vault-api-for-tts.git` folder), even if installations are failing. Instead, try to work around it by creating additional files in the launcher folder, and using those files IN ADDITION to the default project.
   - The only exception when you may need to make changes to the project folder is when the user explicitly wants to modify the existing project. Otherwise if the purpose is to simply write a launcher, the app logic folder should never be touched.
 - When running shell commands, take full advantage of the Pinokio `shell.run` API, which provides features like `env`, `venv`, `input`, `path`, `sudo`, `on`, etc. which can greatly reduce the amount of script code.
   - Python apps: Always use virtual environments via `venv` attribute. This attribute automatically creates a venv or uses if it already exists.
@@ -401,14 +401,14 @@ logs/
 - `pinokio.js` does NOT need a separate `stop` script. Every script that can be started can also be natively stopped through the Pinokio UI, therefore you do not need a separate stop script for start script
 ### 9. Writing launchers for existing projects
 - When writing or modifying pinokio launcher scripts, figure out the install/launch steps by reading the project folder `app`.
-- In most cases, the `README.md` file in the `F:\pinokio\api\api-for-tts.git` folder contains the instructions needed to install and run the app, but if not, figure out by scanning the rest of the project files.
+- In most cases, the `README.md` file in the `F:\pinokio\api\voice-vault-api-for-tts.git` folder contains the instructions needed to install and run the app, but if not, figure out by scanning the rest of the project files.
 - Install scripts should work for each specific operating system, so ignore Docker related instructions. Instead use install/launch instructions for each platform.
 ### 10. Don't use Docker unless really necessary
 - Some projects suggest docker as installation options. But even in these cases, try to find "development" options to launch the app without relying on Docker, as much as possible. We do not need Docker since we can automatically install and launch apps specifically for the user's platform, since we can write scripts that run cross platform.
 ### 11. pinokio.json
 - Do not touch the `version` field since the version is the script schema version and the one pre-set in `pinokio.js` must be used.
 - `icon`: It's best if we have a user friendly icon to represent the app, so try to get an image and link it from `pinokio.json`.
-  - If the git repository for the `F:\pinokio\api\api-for-tts.git` folder points to GitHub (for example https://github.com/<USERNAME>/<REPO_NAME>`, ask the user if they want to download the icon from GitHub, and if approved, get the `avatar_url` by fetching `https://api.github.com/users/<USERNAME>`, and then download the image to the root folder as `icon.png`, and set `icon.png` as the `icon` field of the `pinokio.json`. 
+  - If the git repository for the `F:\pinokio\api\voice-vault-api-for-tts.git` folder points to GitHub (for example https://github.com/<USERNAME>/<REPO_NAME>`, ask the user if they want to download the icon from GitHub, and if approved, get the `avatar_url` by fetching `https://api.github.com/users/<USERNAME>`, and then download the image to the root folder as `icon.png`, and set `icon.png` as the `icon` field of the `pinokio.json`. 
 ### 12. Gitignore
 - When a launcher involves cloning 3rd party repositories, downloading files dynamically, or some files to be generated, these need to be included in the .gitignore file. This may include things like:
   - Cloning git repositories

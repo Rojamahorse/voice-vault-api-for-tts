@@ -1,7 +1,7 @@
-﻿# SPEC: API for TTS (api-for-tts.git)
+﻿# SPEC: API for TTS (voice-vault-api-for-tts.git)
 
 ## Scope
-- This spec covers only `F:\pinokio\api\api-for-tts.git` and its subfolders.
+- This spec covers only `F:\pinokio\api\voice-vault-api-for-tts.git` and its subfolders.
 - External apps (ex: Ultimate TTS Studio) are dependencies, not part of this scope.
 
 ## Summary

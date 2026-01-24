@@ -14,7 +14,7 @@ Ultimate-TTS-Studio.git folder.
 ## How to use
 1. Start Ultimate TTS Studio on this machine and make sure Gradio is running
    (default `http://127.0.0.1:7860/`).
-2. In Pinokio, open `api-for-tts.git`, run `Install`, then `Start`.
+2. In Pinokio, open `voice-vault-api-for-tts.git`, run `Install`, then `Start`.
 3. Note the proxy URL shown in the terminal (for example `http://0.0.0.0:3000`).
    Use the LAN IP for remote access, e.g. `http://192.168.0.236:<proxy_port>`.
 4. Optional: open the Voice Manager UI at `http://192.168.0.236:<proxy_port>/ui`
