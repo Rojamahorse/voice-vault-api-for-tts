@@ -1,4 +1,7 @@
 {
-  "title": "API for TTS",
-  "description": "OpenAI-compatible TTS proxy for Ultimate TTS Studio."
+  "title": "Voice Vault API for TTS",
+  "description": "OpenAI-compatible TTS proxy for Ultimate TTS Studio.",
+  "plugin": {
+    "menu": []
+  }
 }

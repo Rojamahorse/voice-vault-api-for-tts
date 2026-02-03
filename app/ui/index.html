@@ -525,6 +525,11 @@
             <label for="presetEngine">Engine</label>
             <select id="presetEngine"></select>
           </div>
+          <div id="qwenModelSizeWrap" style="display: none;">
+            <label id="qwenModelSizeLabel" for="qwenModelSize">Qwen Model Size</label>
+            <select id="qwenModelSize"></select>
+            <div class="hint" id="qwenModelSizeHint"></div>
+          </div>
           <div>
             <label for="presetVoiceChoice">Engine voice option</label>
             <select id="presetVoiceChoice"></select>
@@ -631,6 +636,7 @@
         presets: [],
         voiceChoices: { choices: [], param: "" },
         paramDefaults: {},
+        paramSpecs: {},
         apiKey: ""
       };
 
@@ -648,6 +654,10 @@
       const presetName = document.getElementById("presetName");
       const presetNameHint = document.getElementById("presetNameHint");
       const presetEngine = document.getElementById("presetEngine");
+      const qwenModelSizeWrap = document.getElementById("qwenModelSizeWrap");
+      const qwenModelSize = document.getElementById("qwenModelSize");
+      const qwenModelSizeLabel = document.getElementById("qwenModelSizeLabel");
+      const qwenModelSizeHint = document.getElementById("qwenModelSizeHint");
       const presetVoiceSample = document.getElementById("presetVoiceSample");
       const voiceSampleHint = document.getElementById("voiceSampleHint");
       const presetVoiceChoice = document.getElementById("presetVoiceChoice");
@@ -672,7 +682,7 @@
       const voicesExample = document.getElementById("voicesExample");
       const cheatStatus = document.getElementById("cheatStatus");
 
-      const requiredRefEngines = new Set(["IndexTTS2"]);
+      const requiredRefEngines = new Set(["IndexTTS2", "Qwen Voice Clone"]);
       let autoNameEnabled = true;
       let lastAutoName = "";
 
@@ -753,9 +763,47 @@
         });
       }
 
+      function getParamChoices(name) {
+        const spec = state.paramSpecs[name];
+        if (!spec || !Array.isArray(spec.choices)) {
+          return [];
+        }
+        return spec.choices.filter((value) => String(value).trim());
+      }
+
+      function updateQwenModelSize(engine) {
+        let paramKey = "";
+        if (engine === "Qwen Voice Clone") {
+          paramKey = "qwen_clone_model_size";
+          qwenModelSizeLabel.textContent = "Qwen Clone Model Size";
+        } else if (engine === "Qwen Custom Voice") {
+          paramKey = "qwen_custom_model_size";
+          qwenModelSizeLabel.textContent = "Qwen Custom Model Size";
+        } else {
+          qwenModelSizeWrap.style.display = "none";
+          qwenModelSize.dataset.paramKey = "";
+          qwenModelSize.innerHTML = "";
+          qwenModelSizeHint.textContent = "";
+          return;
+        }
+        const choices = getParamChoices(paramKey);
+        const options = choices.length ? choices : ["0.6B", "1.7B"];
+        optionList(qwenModelSize, options);
+        const defaultValue = state.paramDefaults[paramKey];
+        if (defaultValue && options.includes(String(defaultValue))) {
+          qwenModelSize.value = String(defaultValue);
+        } else {
+          qwenModelSize.value = options[0] || "";
+        }
+        qwenModelSize.dataset.paramKey = paramKey;
+        qwenModelSizeHint.textContent = "Match the model size loaded in Ultimate TTS Studio.";
+        qwenModelSizeWrap.style.display = "";
+      }
+
       function renderParamForm(params) {
         paramForm.innerHTML = "";
         state.paramDefaults = {};
+        state.paramSpecs = {};
         if (!params.length) {
           paramForm.innerHTML = "<div class=\"hint\">No parameters found for this engine.</div>";
           return;
@@ -768,6 +816,7 @@
           const component = param.component || "";
           const choices = Array.isArray(param.choices) ? param.choices : [];
           state.paramDefaults[name] = param.default;
+          state.paramSpecs[name] = param;
 
           const wrapper = document.createElement("div");
           wrapper.className = "list-item param-field";
@@ -1194,6 +1243,7 @@
         if (!engine) return;
         const data = await fetchJson(`/v1/tts/params?engine=${encodeURIComponent(engine)}`);
         renderParamForm(data.params || []);
+        updateQwenModelSize(engine);
         if (data.gradio_url) {
           gradioUrl.value = data.gradio_url;
         }
@@ -1315,6 +1365,10 @@
             applyParamValue(input, storedParams[name]);
           }
         });
+        const qwenParamKey = qwenModelSize.dataset.paramKey;
+        if (qwenParamKey && Object.prototype.hasOwnProperty.call(storedParams, qwenParamKey)) {
+          qwenModelSize.value = storedParams[qwenParamKey];
+        }
         if (storedParams.indextts2_emotion_audio) {
           presetEmotionSample.value = storedParams.indextts2_emotion_audio;
         } else {
@@ -1405,6 +1459,10 @@
         }
         if (state.voiceChoices.param && presetVoiceChoice.value) {
           params[state.voiceChoices.param] = presetVoiceChoice.value;
+        }
+        const qwenParamKey = qwenModelSize.dataset.paramKey;
+        if (qwenParamKey && qwenModelSize.value) {
+          params[qwenParamKey] = qwenModelSize.value;
         }
         if (presetEmotionSample.value && engine === "IndexTTS2") {
           params.indextts2_emotion_audio = presetEmotionSample.value;

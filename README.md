@@ -61,6 +61,11 @@ Preset behavior:
 
 Local data is stored under `app/data/` (ignored by git).
 
+Admin login (optional):
+Set `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `ENVIRONMENT` to enable HTTP Basic
+auth for the Voice Manager UI (`/ui`) and all `/v1/tts/*` admin endpoints. Leave
+them empty to disable login.
+
 ## API examples
 
 ### Curl

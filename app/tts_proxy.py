@@ -8,8 +8,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Any
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Request, Depends
 from fastapi.responses import Response, HTMLResponse, FileResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 import httpx
 from gradio_client import Client, handle_file
@@ -27,6 +28,8 @@ AUTO_LOAD_ENGINE = os.environ.get("AUTO_LOAD_ENGINE", "true").lower() in (
     "on",
 )
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
 KNOWN_ENGINES = [
     "ChatterboxTTS",
@@ -40,6 +43,9 @@ KNOWN_ENGINES = [
     "Higgs Audio",
     "VoxCPM",
     "KittenTTS",
+    "Qwen Voice Design",
+    "Qwen Voice Clone",
+    "Qwen Custom Voice",
 ]
 
 ENGINE_LOAD_API = {
@@ -68,6 +74,9 @@ ENGINE_PARAM_PREFIX = {
     "Higgs Audio": "higgs_",
     "VoxCPM": "voxcpm_",
     "KittenTTS": "kitten_",
+    "Qwen Voice Design": "qwen_",
+    "Qwen Voice Clone": "qwen_",
+    "Qwen Custom Voice": "qwen_",
 }
 
 ENGINE_REF_PARAM = {
@@ -80,10 +89,12 @@ ENGINE_REF_PARAM = {
     "F5-TTS": "f5_ref_audio",
     "Higgs Audio": "higgs_ref_audio",
     "VoxCPM": "voxcpm_ref_audio",
+    "Qwen Voice Clone": "qwen_ref_audio",
 }
 
 REQUIRED_REF_ENGINES = {
     "IndexTTS2",
+    "Qwen Voice Clone",
 }
 
 PARAM_CHOICES = {
@@ -94,6 +105,7 @@ ENGINE_VOICE_PARAM = {
     "Kokoro TTS": "kokoro_voice",
     "KittenTTS": "kitten_voice",
     "Higgs Audio": "higgs_voice_preset",
+    "Qwen Custom Voice": "qwen_speaker",
 }
 
 KITTEN_VOICES = [
@@ -116,6 +128,7 @@ logging.basicConfig(level=LOG_LEVEL)
 logger = logging.getLogger("tts_proxy")
 
 app = FastAPI()
+security = HTTPBasic(auto_error=False)
 
 APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR / "data"
@@ -139,7 +152,30 @@ FILE_PARAM_NAMES = {
     "f5_ref_audio",
     "higgs_ref_audio",
     "voxcpm_ref_audio",
+    "qwen_ref_audio",
 }
+
+def admin_auth_enabled() -> bool:
+    return bool(ADMIN_USERNAME and ADMIN_PASSWORD)
+
+
+def require_admin(credentials: HTTPBasicCredentials = Depends(security)) -> None:
+    if not admin_auth_enabled():
+        return
+    if credentials is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    user_ok = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
+    pass_ok = secrets.compare_digest(credentials.password, ADMIN_PASSWORD)
+    if not (user_ok and pass_ok):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
 
 
 def ensure_data_dirs() -> None:
@@ -406,11 +442,12 @@ class OpenAITTSSpeechRequest(BaseModel):
 
 
 def resolve_engine(req: OpenAITTSSpeechRequest, preset: Optional[dict]) -> str:
-    if req.model and req.model in KNOWN_ENGINES:
+    supported = list_supported_engines()
+    if req.model and req.model in supported:
         return req.model
     if preset:
         return preset.get("engine", DEFAULT_TTS_ENGINE)
-    if req.voice and req.voice in KNOWN_ENGINES:
+    if req.voice and req.voice in supported:
         return req.voice
     return DEFAULT_TTS_ENGINE
 
@@ -498,6 +535,25 @@ def fetch_default_params() -> tuple[dict, dict, str, bool]:
             "example": param.get("example_input"),
         }
     return defaults, meta, "Loaded from Gradio metadata.", True
+
+
+def get_engine_choices_from_meta() -> list[str]:
+    if DEFAULT_PARAM_META is None or not DEFAULT_PARAM_META:
+        get_default_params()
+    meta = DEFAULT_PARAM_META or {}
+    engine_meta = meta.get("tts_engine") or {}
+    choices = engine_meta.get("choices") or []
+    if isinstance(choices, list):
+        return [str(choice) for choice in choices if str(choice).strip()]
+    return []
+
+
+def list_supported_engines() -> list[str]:
+    engines = list(KNOWN_ENGINES)
+    for choice in get_engine_choices_from_meta():
+        if choice not in engines:
+            engines.append(choice)
+    return engines
 
 
 def coerce_value(value, python_type: Optional[str]):
@@ -645,8 +701,23 @@ def fetch_kokoro_voice_choices() -> list[str]:
 
 
 def fetch_voice_choices(engine: str) -> dict:
+    def meta_choices(param_name: str) -> list[str]:
+        if DEFAULT_PARAM_META is None or not DEFAULT_PARAM_META:
+            get_default_params()
+        meta = DEFAULT_PARAM_META or {}
+        info = meta.get(param_name) or {}
+        choices = info.get("choices") or []
+        if isinstance(choices, list):
+            return [str(choice) for choice in choices if str(choice).strip()]
+        return []
+
     if engine == "Kokoro TTS":
         return {"param": ENGINE_VOICE_PARAM[engine], "choices": fetch_kokoro_voice_choices()}
+    if engine in ENGINE_VOICE_PARAM:
+        param = ENGINE_VOICE_PARAM[engine]
+        choices = meta_choices(param)
+        if choices:
+            return {"param": param, "choices": choices}
     if engine == "KittenTTS":
         return {"param": ENGINE_VOICE_PARAM[engine], "choices": KITTEN_VOICES}
     if engine == "Higgs Audio":
@@ -659,41 +730,41 @@ def health() -> dict:
     return {"status": "ok"}
 
 
-@app.get("/", include_in_schema=False)
+@app.get("/", include_in_schema=False, dependencies=[Depends(require_admin)])
 def root() -> Response:
     if UI_INDEX.exists():
         return FileResponse(UI_INDEX)
     return HTMLResponse("<h1>API for TTS</h1>")
 
 
-@app.get("/ui", include_in_schema=False)
+@app.get("/ui", include_in_schema=False, dependencies=[Depends(require_admin)])
 def ui() -> Response:
     if UI_INDEX.exists():
         return FileResponse(UI_INDEX)
     return HTMLResponse("<h1>Voice Manager UI not found.</h1>", status_code=404)
 
 
-@app.get("/v1/tts/engines")
+@app.get("/v1/tts/engines", dependencies=[Depends(require_admin)])
 def engines() -> dict:
-    return {"engines": KNOWN_ENGINES}
+    return {"engines": list_supported_engines()}
 
 
-@app.get("/v1/tts/params")
+@app.get("/v1/tts/params", dependencies=[Depends(require_admin)])
 def params(engine: Optional[str] = Query(default=None)) -> dict:
-    engine = engine if engine in KNOWN_ENGINES else None
+    engine = engine if engine in list_supported_engines() else None
     get_default_params()
     status = GRADIO_STATUS.copy()
     return {"params": list_param_specs(engine), "message": status.get("message"), "connected": status.get("connected"), "gradio_url": status.get("url")}
 
 
-@app.get("/v1/tts/gradio")
+@app.get("/v1/tts/gradio", dependencies=[Depends(require_admin)])
 def gradio_status() -> dict:
     get_default_params()
     status = GRADIO_STATUS.copy()
     return {"connected": status.get("connected"), "message": status.get("message"), "gradio_url": status.get("url")}
 
 
-@app.post("/v1/tts/gradio")
+@app.post("/v1/tts/gradio", dependencies=[Depends(require_admin)])
 def set_gradio(payload: dict) -> dict:
     global GRADIO_URL, GRADIO_STATUS
     url = str(payload.get("url", "")).strip()
@@ -708,7 +779,7 @@ def set_gradio(payload: dict) -> dict:
     return {"status": "updated", "connected": status.get("connected"), "message": status.get("message"), "gradio_url": status.get("url"), "params": list_param_specs()}
 
 
-@app.post("/v1/tts/gradio/reload")
+@app.post("/v1/tts/gradio/reload", dependencies=[Depends(require_admin)])
 def reload_gradio() -> dict:
     global GRADIO_URL
     env_value = read_env_value("GRADIO_URL")
@@ -723,23 +794,23 @@ def reload_gradio() -> dict:
     return {"status": "reloaded", "connected": status.get("connected"), "message": status.get("message"), "gradio_url": status.get("url"), "params": list_param_specs()}
 
 
-@app.get("/v1/tts/voice-choices")
+@app.get("/v1/tts/voice-choices", dependencies=[Depends(require_admin)])
 def voice_choices(engine: str = Query(...)) -> dict:
-    if engine not in KNOWN_ENGINES:
+    if engine not in list_supported_engines():
         raise HTTPException(status_code=400, detail="Unknown engine")
     return fetch_voice_choices(engine)
 
 
-@app.get("/v1/tts/voices")
+@app.get("/v1/tts/voices", dependencies=[Depends(require_admin)])
 def voices() -> dict:
     return {"voices": load_voices()}
 
-@app.get("/v1/tts/api-key")
+@app.get("/v1/tts/api-key", dependencies=[Depends(require_admin)])
 def api_key_status() -> dict:
     return {"api_key": get_api_key()}
 
 
-@app.post("/v1/tts/api-key/generate")
+@app.post("/v1/tts/api-key/generate", dependencies=[Depends(require_admin)])
 def api_key_generate() -> dict:
     ensure_data_dirs()
     api_key = secrets.token_urlsafe(24)
@@ -747,7 +818,7 @@ def api_key_generate() -> dict:
     return {"api_key": api_key}
 
 
-@app.post("/v1/tts/voices")
+@app.post("/v1/tts/voices", dependencies=[Depends(require_admin)])
 def create_voice(
     name: str = Form(default=""),
     file: UploadFile = File(...),
@@ -775,7 +846,7 @@ def create_voice(
     return {"voice": voice_data}
 
 
-@app.delete("/v1/tts/voices/{voice_id}")
+@app.delete("/v1/tts/voices/{voice_id}", dependencies=[Depends(require_admin)])
 def delete_voice(voice_id: str) -> dict:
     voices = load_voices()
     presets = load_presets()
@@ -796,12 +867,12 @@ def delete_voice(voice_id: str) -> dict:
     return {"status": "deleted"}
 
 
-@app.get("/v1/tts/presets")
+@app.get("/v1/tts/presets", dependencies=[Depends(require_admin)])
 def presets() -> dict:
     return {"presets": load_presets()}
 
 
-@app.get("/v1/tts/presets/{preset_name}")
+@app.get("/v1/tts/presets/{preset_name}", dependencies=[Depends(require_admin)])
 def preset(preset_name: str) -> dict:
     preset_data = find_preset(preset_name)
     if not preset_data:
@@ -809,14 +880,14 @@ def preset(preset_name: str) -> dict:
     return {"preset": preset_data}
 
 
-@app.post("/v1/tts/presets")
+@app.post("/v1/tts/presets", dependencies=[Depends(require_admin)])
 def create_preset(payload: dict) -> dict:
     name = str(payload.get("name", "")).strip()
     label = str(payload.get("label", "")).strip()
     engine = payload.get("engine")
     if not name:
         raise HTTPException(status_code=400, detail="Preset name is required")
-    if engine not in KNOWN_ENGINES:
+    if engine not in list_supported_engines():
         raise HTTPException(status_code=400, detail="Unknown engine")
     voice_id = payload.get("voice_id")
     if voice_id and not find_voice(voice_id):
@@ -847,7 +918,7 @@ def create_preset(payload: dict) -> dict:
     return {"preset": find_preset(name)}
 
 
-@app.delete("/v1/tts/presets/{preset_name}")
+@app.delete("/v1/tts/presets/{preset_name}", dependencies=[Depends(require_admin)])
 def delete_preset(preset_name: str) -> dict:
     presets = load_presets()
     remaining = [preset for preset in presets if preset.get("name") != preset_name]
@@ -860,9 +931,10 @@ def delete_preset(preset_name: str) -> dict:
 @app.get("/v1/models")
 def models(request: Request) -> dict:
     require_api_key(request)
+    engines = list_supported_engines()
     return {
         "object": "list",
-        "data": [{"id": engine, "object": "model"} for engine in KNOWN_ENGINES],
+        "data": [{"id": engine, "object": "model"} for engine in engines],
     }
 
 

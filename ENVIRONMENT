@@ -45,7 +45,27 @@ PINOKIO_SCRIPT_DEFAULT=true
 # Leave empty to auto-use the local default (http://127.0.0.1:7860/).
 #
 ##########################################################################
-GRADIO_URL=http://192.168.0.51:7864/
+GRADIO_URL=http://localhost:7860/
+
+##########################################################################
+#
+# PROXY_PORT
+# Fixed port for the TTS proxy (bookmark-friendly).
+# Change this if you want a different default port.
+#
+##########################################################################
+PROXY_PORT=42025
+
+##########################################################################
+#
+# ADMIN_USERNAME / ADMIN_PASSWORD
+# Set both values to enable HTTP Basic auth for the Voice Manager UI
+# and the /v1/tts/* admin endpoints.
+# Leave empty to disable login.
+#
+##########################################################################
+ADMIN_USERNAME=
+ADMIN_PASSWORD=
 
 ##########################################################################
 #
@@ -56,7 +76,7 @@ GRADIO_URL=http://192.168.0.51:7864/
 # or change the path if you want to use a different path
 #
 ##########################################################################
-GRADIO_TEMP_DIR=./cache/GRADIO_TEMP_DIR
+GRADIO_TEMP_DIR=../cache/GRADIO_TEMP_DIR
 
 ##########################################################################
 #
@@ -70,7 +90,7 @@ GRADIO_TEMP_DIR=./cache/GRADIO_TEMP_DIR
 # huggingface files under PINOKIO_HOME/cache/HF_HOME without redundancy.
 #
 ##########################################################################
-HF_HOME=./cache/HF_HOME
+HF_HOME=../cache/HF_HOME
 
 ##########################################################################
 #
@@ -83,7 +103,7 @@ HF_HOME=./cache/HF_HOME
 # torch hub files under PINOKIO_HOME/cache/TORCH_HOME without redundancy.
 #
 ##########################################################################
-TORCH_HOME=./cache/TORCH_HOME
+TORCH_HOME=../cache/TORCH_HOME
 
 ##########################################################################
 #
@@ -101,4 +121,4 @@ PINOKIO_SHARE_LOCAL=false
 # for local sharing.
 #
 ##########################################################################
-PINOKIO_SHARE_LOCAL_PORT=
+PINOKIO_SHARE_LOCAL_PORT=42022
