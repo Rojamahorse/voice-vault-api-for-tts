@@ -846,6 +846,55 @@ def create_voice(
     return {"voice": voice_data}
 
 
+@app.put("/v1/tts/voices/{voice_id}", dependencies=[Depends(require_admin)])
+def update_voice(
+    voice_id: str,
+    name: str = Form(default=""),
+    file: Optional[UploadFile] = File(default=None),
+) -> dict:
+    voices = load_voices()
+    voice = next((v for v in voices if v.get("id") == voice_id), None)
+    if not voice:
+        raise HTTPException(status_code=404, detail="Voice not found")
+
+    updated = False
+    label = name.strip()
+    if label:
+        voice["label"] = label
+        updated = True
+
+    if file is not None:
+        ensure_data_dirs()
+        old_path = resolve_voice_path(voice)
+        extension = Path(file.filename or "").suffix.lower() or Path(voice["filename"]).suffix or ".wav"
+        filename = f"{voice_id}{extension}"
+        target_path = VOICE_DIR / filename
+        with target_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        if old_path.exists() and old_path != target_path:
+            old_path.unlink()
+        voice["filename"] = filename
+        updated = True
+
+    if not updated:
+        raise HTTPException(status_code=400, detail="No changes provided")
+
+    voice["updated_at"] = now_iso()
+    save_voices(voices)
+    return {"voice": voice}
+
+
+@app.get("/v1/tts/voices/{voice_id}/file", dependencies=[Depends(require_admin)])
+def voice_file(voice_id: str) -> Response:
+    voice = find_voice(voice_id)
+    if not voice:
+        raise HTTPException(status_code=404, detail="Voice not found")
+    file_path = resolve_voice_path(voice)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Voice file not found")
+    return FileResponse(file_path)
+
+
 @app.delete("/v1/tts/voices/{voice_id}", dependencies=[Depends(require_admin)])
 def delete_voice(voice_id: str) -> dict:
     voices = load_voices()

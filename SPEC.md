@@ -13,13 +13,14 @@ voice samples and presets.
 - OpenAI-compatible TTS endpoint at `/v1/audio/speech`.
 - Basic discovery endpoints for models and voices.
 - Voice and preset management with a local UI at `/ui`.
+- Voice editor for trimming and replacing saved samples (with optional recording).
 - No modifications to Ultimate-TTS-Studio app code.
 - Minimal configuration via environment variables and `ENVIRONMENT`.
 
 ## Non-goals
 - Building or modifying TTS model inference.
 - Implementing authentication, billing, or rate limiting.
-- Building audio editing features beyond the current UI scope.
+- Building advanced audio editing beyond basic trim/replace workflows.
 
 ## User Flows
 - As a user, I set a Gradio target URL, load engines, and confirm connectivity.
@@ -49,7 +50,7 @@ voice samples and presets.
 
 ## Data Model
 - Voice
-  - `id`, `label`, `filename`, `created_at`
+  - `id`, `label`, `filename`, `created_at`, `updated_at` (optional)
 - Preset
   - `name`, `label`, `engine`, `voice_id`, `params`, `updated_at`
 
@@ -63,6 +64,8 @@ voice samples and presets.
 - `POST /v1/tts/gradio/reload` - reload Gradio metadata.
 - `GET /v1/tts/voice-choices?engine=...` - engine-specific voice choices.
 - `GET /v1/tts/voices` - list saved voices.
+- `GET /v1/tts/voices/{voice_id}/file` - download a saved voice sample.
+- `PUT /v1/tts/voices/{voice_id}` - update voice label and/or file.
 - `GET /v1/tts/api-key` - returns stored API key (blank if unset).
 - `POST /v1/tts/api-key/generate` - generates and persists an API key.
 - `POST /v1/tts/voices` - create a voice sample.

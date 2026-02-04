@@ -336,13 +336,82 @@
         border-radius: 14px;
         padding: 12px;
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 10px;
       }
 
       .list-item strong {
         font-size: 14px;
+      }
+
+      .voice-item {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+      }
+
+      .voice-item-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: start;
+      }
+
+      .voice-actions {
+        display: inline-flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .voice-audio {
+        width: 100%;
+      }
+
+      .voice-audio audio {
+        width: 100%;
+      }
+
+      .voice-editor {
+        display: grid;
+        gap: 16px;
+      }
+
+      .editor-header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .editor-meta {
+        font-size: 12px;
+        color: var(--ink-soft);
+      }
+
+      .voice-editor-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      }
+
+      .voice-preview {
+        display: grid;
+        gap: 12px;
+      }
+
+      .trim-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      }
+
+      .trim-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) max-content;
+        gap: 10px;
+        align-items: center;
       }
 
       .badge {
@@ -486,13 +555,60 @@
           <summary>Voice Vault</summary>
           <div class="collapse-body">
             <form id="voiceForm">
-              <label for="voiceName">Voice name</label>
-              <input id="voiceName" placeholder="matt" />
-              <label for="voiceFile">Reference audio (wav or mp3)</label>
-              <input id="voiceFile" type="file" accept=".wav,.mp3,.flac,.m4a,.ogg" />
-              <div class="row">
-                <button type="submit">Save voice sample</button>
-                <button type="button" class="ghost" id="refreshVoices">Refresh list</button>
+              <div class="voice-editor">
+                <div class="editor-header">
+                  <div class="badge" id="editorBadge">New voice</div>
+                  <div class="editor-meta" id="editorHint">Upload or record audio, then trim to the best sample.</div>
+                </div>
+                <div class="voice-editor-grid">
+                  <div>
+                    <label for="voiceName">Voice name</label>
+                    <input id="voiceName" placeholder="matt" />
+                  </div>
+                  <div>
+                    <label for="voiceFile">Upload audio</label>
+                    <input id="voiceFile" type="file" accept=".wav,.mp3,.flac,.m4a,.ogg" />
+                  </div>
+                  <div>
+                    <label>Record (optional)</label>
+                    <div class="inline-buttons">
+                      <button type="button" class="ghost" id="recordStart">Record</button>
+                      <button type="button" class="ghost" id="recordStop" disabled>Stop</button>
+                      <button type="button" class="ghost" id="recordClear">Clear</button>
+                    </div>
+                    <div class="hint" id="recordStatus"></div>
+                  </div>
+                </div>
+                <div class="voice-preview">
+                  <audio id="voicePreview" controls></audio>
+                  <div class="trim-grid">
+                    <div>
+                      <label for="trimStart">Trim start (s)</label>
+                      <div class="trim-row">
+                        <input id="trimStart" type="range" min="0" max="0" step="0.01" value="0" />
+                        <input id="trimStartValue" type="number" class="param-number" min="0" step="0.01" value="0" />
+                      </div>
+                    </div>
+                    <div>
+                      <label for="trimEnd">Trim end (s)</label>
+                      <div class="trim-row">
+                        <input id="trimEnd" type="range" min="0" max="0" step="0.01" value="0" />
+                        <input id="trimEndValue" type="number" class="param-number" min="0" step="0.01" value="0" />
+                      </div>
+                    </div>
+                  </div>
+                  <div class="inline-buttons">
+                    <button type="button" class="ghost" id="playSelection">Play selection</button>
+                    <button type="button" class="ghost" id="resetSelection">Reset selection</button>
+                  </div>
+                  <div class="hint" id="selectionHint"></div>
+                </div>
+                <div class="row">
+                  <button type="submit" id="saveVoice">Save new voice sample</button>
+                  <button type="button" class="ghost" id="updateVoice">Update selected voice</button>
+                  <button type="button" class="ghost" id="cancelEdit">Cancel edit</button>
+                  <button type="button" class="ghost" id="refreshVoices">Refresh list</button>
+                </div>
               </div>
             </form>
             <div class="status" id="voiceStatus"></div>
@@ -640,6 +756,21 @@
         apiKey: ""
       };
 
+      const editorState = {
+        mode: "new",
+        voiceId: "",
+        sourceBlob: null,
+        audioBuffer: null,
+        duration: 0,
+        audioUrl: "",
+        recordStream: null,
+        recorder: null,
+        recordChunks: [],
+        stopTimer: null
+      };
+
+      const audioContext = window.AudioContext ? new AudioContext() : null;
+
       const engineStatus = document.getElementById("engineStatus");
       const gradioUrl = document.getElementById("gradioUrl");
       const gradioStatus = document.getElementById("gradioStatus");
@@ -650,6 +781,24 @@
       const voiceStatus = document.getElementById("voiceStatus");
       const voiceList = document.getElementById("voiceList");
       const refreshVoicesBtn = document.getElementById("refreshVoices");
+      const voiceName = document.getElementById("voiceName");
+      const voiceFileInput = document.getElementById("voiceFile");
+      const voicePreview = document.getElementById("voicePreview");
+      const trimStart = document.getElementById("trimStart");
+      const trimEnd = document.getElementById("trimEnd");
+      const trimStartValue = document.getElementById("trimStartValue");
+      const trimEndValue = document.getElementById("trimEndValue");
+      const playSelectionBtn = document.getElementById("playSelection");
+      const resetSelectionBtn = document.getElementById("resetSelection");
+      const updateVoiceBtn = document.getElementById("updateVoice");
+      const cancelEditBtn = document.getElementById("cancelEdit");
+      const editorBadge = document.getElementById("editorBadge");
+      const editorHint = document.getElementById("editorHint");
+      const selectionHint = document.getElementById("selectionHint");
+      const recordStartBtn = document.getElementById("recordStart");
+      const recordStopBtn = document.getElementById("recordStop");
+      const recordClearBtn = document.getElementById("recordClear");
+      const recordStatus = document.getElementById("recordStatus");
 
       const presetName = document.getElementById("presetName");
       const presetNameHint = document.getElementById("presetNameHint");
@@ -1087,6 +1236,222 @@
         });
       }
 
+      function setEditorMode(mode, voice) {
+        editorState.mode = mode;
+        editorState.voiceId = voice ? voice.id : "";
+        updateVoiceBtn.disabled = !editorState.voiceId;
+        if (mode === "edit" && voice) {
+          editorBadge.textContent = "Editing voice";
+          editorHint.textContent = `Updating ${voice.label || voice.id}.`;
+          cancelEditBtn.disabled = false;
+        } else {
+          editorBadge.textContent = "New voice";
+          editorHint.textContent = "Upload or record audio, then trim to the best sample.";
+          cancelEditBtn.disabled = true;
+        }
+      }
+
+      function clearEditorStatus(message = "") {
+        setStatus(voiceStatus, message);
+        recordStatus.textContent = "";
+      }
+
+      function clearEditorAudio() {
+        if (editorState.audioUrl) {
+          URL.revokeObjectURL(editorState.audioUrl);
+        }
+        if (editorState.stopTimer) {
+          window.clearTimeout(editorState.stopTimer);
+          editorState.stopTimer = null;
+        }
+        editorState.sourceBlob = null;
+        editorState.audioBuffer = null;
+        editorState.duration = 0;
+        editorState.audioUrl = "";
+        voicePreview.removeAttribute("src");
+        voicePreview.load();
+        trimStart.value = 0;
+        trimEnd.value = 0;
+        trimStartValue.value = 0;
+        trimEndValue.value = 0;
+        selectionHint.textContent = "";
+      }
+
+      function updateSelectionHint() {
+        const duration = editorState.duration || Number(voicePreview.duration) || 0;
+        const start = Number(trimStart.value) || 0;
+        const end = Number(trimEnd.value) || 0;
+        if (!duration) {
+          selectionHint.textContent = "Load audio to trim.";
+          return;
+        }
+        const length = Math.max(0, end - start);
+        selectionHint.textContent = `Selection: ${length.toFixed(2)}s of ${duration.toFixed(2)}s.`;
+      }
+
+      function syncTrimValues(source) {
+        const duration = editorState.duration || Number(voicePreview.duration) || 0;
+        if (!duration) return;
+        const minGap = 0.05;
+        let start = Number(trimStart.value) || 0;
+        let end = Number(trimEnd.value) || duration;
+        if (source === "start") {
+          start = Math.max(0, Math.min(start, duration - minGap));
+          if (start >= end - minGap) {
+            end = Math.min(duration, start + minGap);
+          }
+        } else if (source === "end") {
+          end = Math.min(duration, Math.max(end, minGap));
+          if (end <= start + minGap) {
+            start = Math.max(0, end - minGap);
+          }
+        }
+        trimStart.value = start;
+        trimEnd.value = end;
+        trimStartValue.value = start.toFixed(2);
+        trimEndValue.value = end.toFixed(2);
+        updateSelectionHint();
+      }
+
+      async function loadAudioBlob(blob) {
+        clearEditorStatus();
+        if (!blob) return;
+        if (editorState.audioUrl) {
+          URL.revokeObjectURL(editorState.audioUrl);
+        }
+        editorState.sourceBlob = blob;
+        editorState.audioUrl = URL.createObjectURL(blob);
+        voicePreview.src = editorState.audioUrl;
+        voicePreview.load();
+        editorState.audioBuffer = null;
+        editorState.duration = 0;
+        try {
+          if (audioContext) {
+            const arrayBuffer = await blob.arrayBuffer();
+            editorState.audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+            editorState.duration = editorState.audioBuffer.duration || 0;
+          }
+        } catch (err) {
+          editorState.audioBuffer = null;
+        }
+        const duration = editorState.duration || Number(voicePreview.duration) || 0;
+        trimStart.max = duration;
+        trimEnd.max = duration;
+        trimStart.value = 0;
+        trimEnd.value = duration;
+        trimStartValue.value = 0;
+        trimEndValue.value = duration ? duration.toFixed(2) : 0;
+        updateSelectionHint();
+      }
+
+      function audioBufferSlice(buffer, startTime, endTime) {
+        const sampleRate = buffer.sampleRate;
+        const startSample = Math.max(0, Math.floor(startTime * sampleRate));
+        const endSample = Math.max(startSample + 1, Math.floor(endTime * sampleRate));
+        const frameCount = endSample - startSample;
+        const trimmed = audioContext.createBuffer(buffer.numberOfChannels, frameCount, sampleRate);
+        for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
+          const channelData = buffer.getChannelData(channel);
+          trimmed.getChannelData(channel).set(channelData.subarray(startSample, endSample));
+        }
+        return trimmed;
+      }
+
+      function writeString(view, offset, string) {
+        for (let i = 0; i < string.length; i += 1) {
+          view.setUint8(offset + i, string.charCodeAt(i));
+        }
+      }
+
+      function floatTo16BitPCM(output, offset, input) {
+        for (let i = 0; i < input.length; i += 1) {
+          const sample = Math.max(-1, Math.min(1, input[i]));
+          output.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+          offset += 2;
+        }
+      }
+
+      function audioBufferToWav(buffer) {
+        const numChannels = buffer.numberOfChannels;
+        const sampleRate = buffer.sampleRate;
+        const samples = buffer.length;
+        const blockAlign = numChannels * 2;
+        const byteRate = sampleRate * blockAlign;
+        const dataSize = samples * blockAlign;
+        const bufferSize = 44 + dataSize;
+        const arrayBuffer = new ArrayBuffer(bufferSize);
+        const view = new DataView(arrayBuffer);
+
+        writeString(view, 0, "RIFF");
+        view.setUint32(4, 36 + dataSize, true);
+        writeString(view, 8, "WAVE");
+        writeString(view, 12, "fmt ");
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, numChannels, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, byteRate, true);
+        view.setUint16(32, blockAlign, true);
+        view.setUint16(34, 16, true);
+        writeString(view, 36, "data");
+        view.setUint32(40, dataSize, true);
+
+        const interleaved = new Float32Array(samples * numChannels);
+        for (let i = 0; i < samples; i += 1) {
+          for (let channel = 0; channel < numChannels; channel += 1) {
+            interleaved[i * numChannels + channel] = buffer.getChannelData(channel)[i];
+          }
+        }
+        floatTo16BitPCM(view, 44, interleaved);
+        return new Blob([view], { type: "audio/wav" });
+      }
+
+      async function getTrimmedBlob() {
+        if (!editorState.sourceBlob) return null;
+        if (!editorState.audioBuffer || !audioContext) {
+          return editorState.sourceBlob;
+        }
+        const duration = editorState.duration || editorState.audioBuffer.duration || 0;
+        if (!duration) return editorState.sourceBlob;
+        const start = Math.max(0, Math.min(Number(trimStart.value) || 0, duration));
+        const end = Math.max(start + 0.05, Math.min(Number(trimEnd.value) || duration, duration));
+        const trimmed = audioBufferSlice(editorState.audioBuffer, start, end);
+        return audioBufferToWav(trimmed);
+      }
+
+      async function loadVoiceForEdit(voice) {
+        try {
+          const res = await fetch(`/v1/tts/voices/${encodeURIComponent(voice.id)}/file`);
+          if (!res.ok) {
+            throw new Error(await res.text());
+          }
+          const blob = await res.blob();
+          voiceName.value = voice.label || "";
+          setEditorMode("edit", voice);
+          await loadAudioBlob(blob);
+        } catch (err) {
+          setStatus(voiceStatus, err.message, true);
+        }
+      }
+
+      function resetEditor() {
+        setEditorMode("new");
+        voiceName.value = "";
+        voiceFileInput.value = "";
+        if (editorState.recorder && editorState.recorder.state !== "inactive") {
+          editorState.recorder.stop();
+        }
+        if (editorState.recordStream) {
+          editorState.recordStream.getTracks().forEach((track) => track.stop());
+          editorState.recordStream = null;
+        }
+        recordStartBtn.disabled = false;
+        recordStopBtn.disabled = true;
+        recordStatus.textContent = "";
+        clearEditorAudio();
+        clearEditorStatus();
+      }
+
       function renderVoices() {
         voiceList.innerHTML = "";
         if (!state.voices.length) {
@@ -1095,15 +1460,24 @@
         }
         state.voices.forEach((voice) => {
           const item = document.createElement("div");
-          item.className = "list-item";
+          item.className = "list-item voice-item";
           item.innerHTML = `
-            <div>
-              <strong>${voice.label}</strong>
-              <div class="hint">${voice.filename}</div>
+            <div class="voice-item-header">
+              <div>
+                <strong>${voice.label}</strong>
+                <div class="hint">${voice.filename}</div>
+              </div>
+              <div class="voice-actions">
+                <button data-edit="${voice.id}" class="ghost">Edit</button>
+                <button data-delete="${voice.id}" class="ghost">Delete</button>
+              </div>
             </div>
-            <button data-id="${voice.id}" class="ghost">Delete</button>
+            <div class="voice-audio">
+              <audio controls preload="none" src="/v1/tts/voices/${encodeURIComponent(voice.id)}/file"></audio>
+            </div>
           `;
-          item.querySelector("button").addEventListener("click", () => deleteVoice(voice.id));
+          item.querySelector("[data-edit]").addEventListener("click", () => loadVoiceForEdit(voice));
+          item.querySelector("[data-delete]").addEventListener("click", () => deleteVoice(voice.id));
           voiceList.appendChild(item);
         });
       }
@@ -1380,23 +1754,62 @@
 
       voiceForm.addEventListener("submit", async (event) => {
         event.preventDefault();
-        const file = document.getElementById("voiceFile").files[0];
-        if (!file) {
-          setStatus(voiceStatus, "Pick a file first.", true);
+        const label = voiceName.value.trim();
+        if (!label) {
+          setStatus(voiceStatus, "Voice name is required.", true);
+          return;
+        }
+        const blob = await getTrimmedBlob();
+        if (!blob) {
+          setStatus(voiceStatus, "Upload or record audio first.", true);
           return;
         }
         const formData = new FormData();
-        formData.append("name", document.getElementById("voiceName").value);
-        formData.append("file", file);
+        formData.append("name", label);
+        formData.append("file", new File([blob], "voice-sample.wav", { type: blob.type || "audio/wav" }));
         try {
           await fetchJson("/v1/tts/voices", { method: "POST", body: formData });
-          document.getElementById("voiceName").value = "";
-          document.getElementById("voiceFile").value = "";
           setStatus(voiceStatus, "Voice sample saved.");
+          resetEditor();
           await refreshVoices();
         } catch (err) {
           setStatus(voiceStatus, err.message, true);
         }
+      });
+
+      updateVoiceBtn.addEventListener("click", async () => {
+        if (!editorState.voiceId) {
+          setStatus(voiceStatus, "Select a voice to update first.", true);
+          return;
+        }
+        const label = voiceName.value.trim();
+        const blob = await getTrimmedBlob();
+        if (!label && !blob) {
+          setStatus(voiceStatus, "Provide a new name or audio update.", true);
+          return;
+        }
+        const formData = new FormData();
+        if (label) {
+          formData.append("name", label);
+        }
+        if (blob) {
+          formData.append("file", new File([blob], `${editorState.voiceId}.wav`, { type: blob.type || "audio/wav" }));
+        }
+        try {
+          await fetchJson(`/v1/tts/voices/${encodeURIComponent(editorState.voiceId)}`, {
+            method: "PUT",
+            body: formData
+          });
+          setStatus(voiceStatus, "Voice updated.");
+          resetEditor();
+          await refreshVoices();
+        } catch (err) {
+          setStatus(voiceStatus, err.message, true);
+        }
+      });
+
+      cancelEditBtn.addEventListener("click", () => {
+        resetEditor();
       });
 
       refreshVoicesBtn.addEventListener("click", refreshVoices);
@@ -1404,6 +1817,116 @@
       reconnectGradioBtn.addEventListener("click", reconnectGradio);
       updateGradioBtn.addEventListener("click", updateGradioTarget);
       generateApiKeyBtn.addEventListener("click", generateApiKey);
+
+      voiceFileInput.addEventListener("change", async () => {
+        const file = voiceFileInput.files[0];
+        if (file) {
+          await loadAudioBlob(file);
+        }
+      });
+
+      trimStart.addEventListener("input", () => syncTrimValues("start"));
+      trimEnd.addEventListener("input", () => syncTrimValues("end"));
+      trimStartValue.addEventListener("input", () => {
+        trimStart.value = trimStartValue.value;
+        syncTrimValues("start");
+      });
+      trimEndValue.addEventListener("input", () => {
+        trimEnd.value = trimEndValue.value;
+        syncTrimValues("end");
+      });
+
+      playSelectionBtn.addEventListener("click", () => {
+        if (!voicePreview.src) return;
+        const start = Number(trimStart.value) || 0;
+        const end = Number(trimEnd.value) || Number(voicePreview.duration) || 0;
+        if (!end || end <= start) return;
+        if (editorState.stopTimer) {
+          window.clearTimeout(editorState.stopTimer);
+        }
+        voicePreview.currentTime = start;
+        voicePreview.play();
+        editorState.stopTimer = window.setTimeout(() => {
+          voicePreview.pause();
+        }, (end - start) * 1000);
+      });
+
+      resetSelectionBtn.addEventListener("click", () => {
+        const duration = editorState.duration || Number(voicePreview.duration) || 0;
+        trimStart.value = 0;
+        trimEnd.value = duration;
+        trimStartValue.value = 0;
+        trimEndValue.value = duration ? duration.toFixed(2) : 0;
+        updateSelectionHint();
+      });
+
+      recordStartBtn.addEventListener("click", async () => {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          recordStatus.textContent = "Recording not supported in this browser.";
+          return;
+        }
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          editorState.recordStream = stream;
+          editorState.recordChunks = [];
+          editorState.recorder = new MediaRecorder(stream);
+          editorState.recorder.ondataavailable = (event) => {
+            if (event.data && event.data.size > 0) {
+              editorState.recordChunks.push(event.data);
+            }
+          };
+          editorState.recorder.onstop = async () => {
+            const blob = new Blob(editorState.recordChunks, { type: editorState.recorder.mimeType || "audio/webm" });
+            await loadAudioBlob(blob);
+            recordStatus.textContent = "Recording captured.";
+          };
+          editorState.recorder.start();
+          recordStatus.textContent = "Recording...";
+          recordStartBtn.disabled = true;
+          recordStopBtn.disabled = false;
+        } catch (err) {
+          recordStatus.textContent = "Microphone permission denied.";
+        }
+      });
+
+      recordStopBtn.addEventListener("click", () => {
+        if (editorState.recorder && editorState.recorder.state !== "inactive") {
+          editorState.recorder.stop();
+        }
+        if (editorState.recordStream) {
+          editorState.recordStream.getTracks().forEach((track) => track.stop());
+          editorState.recordStream = null;
+        }
+        recordStartBtn.disabled = false;
+        recordStopBtn.disabled = true;
+      });
+
+      recordClearBtn.addEventListener("click", () => {
+        if (editorState.recorder && editorState.recorder.state !== "inactive") {
+          editorState.recorder.stop();
+        }
+        if (editorState.recordStream) {
+          editorState.recordStream.getTracks().forEach((track) => track.stop());
+          editorState.recordStream = null;
+        }
+        recordStartBtn.disabled = false;
+        recordStopBtn.disabled = true;
+        recordStatus.textContent = "";
+        clearEditorAudio();
+      });
+
+      voicePreview.addEventListener("loadedmetadata", () => {
+        if (editorState.audioBuffer) return;
+        const duration = Number(voicePreview.duration) || 0;
+        editorState.duration = duration;
+        trimStart.max = duration;
+        trimEnd.max = duration;
+        trimStart.value = 0;
+        trimEnd.value = duration;
+        trimStartValue.value = 0;
+        trimEndValue.value = duration ? duration.toFixed(2) : 0;
+        updateSelectionHint();
+      });
 
       presetEngine.addEventListener("change", async () => {
         await refreshParamForm(presetEngine.value);
@@ -1505,6 +2028,7 @@
 
       async function bootstrap() {
         baseUrl.value = window.location.origin + "/v1";
+        resetEditor();
         try {
           await refreshApiKey();
           await refreshGradioStatus();
