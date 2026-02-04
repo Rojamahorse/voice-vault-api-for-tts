@@ -7,3 +7,5 @@ app/env/
 app/data/
 cache/
 logs/
+ENVIRONMENT
+TODO.md
