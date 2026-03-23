@@ -566,11 +566,25 @@
                     <input id="voiceName" placeholder="matt" />
                   </div>
                   <div>
-                    <label for="voiceFile">Upload audio</label>
-                    <input id="voiceFile" type="file" accept=".wav,.mp3,.flac,.m4a,.ogg" />
+                    <label for="voiceFile">Upload audio or video</label>
+                    <input id="voiceFile" type="file" accept=".wav,.mp3,.flac,.m4a,.ogg,.mp4,.mov,.mkv,.webm,video/*,audio/*" />
                   </div>
                   <div>
                     <label>Record (optional)</label>
+                    <div class="row" style="margin-bottom: 8px;">
+                      <div>
+                        <label for="recordSource">Source</label>
+                        <select id="recordSource">
+                          <option value="microphone">Microphone</option>
+                          <option value="system">System audio (screen/tab share)</option>
+                          <option value="mix">Microphone + system</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label for="recordMaxSeconds">Max seconds</label>
+                        <input id="recordMaxSeconds" type="number" min="5" max="1800" step="1" value="300" />
+                      </div>
+                    </div>
                     <div class="inline-buttons">
                       <button type="button" class="ghost" id="recordStart">Record</button>
                       <button type="button" class="ghost" id="recordStop" disabled>Stop</button>
@@ -613,6 +627,42 @@
             </form>
             <div class="status" id="voiceStatus"></div>
             <div class="list" id="voiceList"></div>
+            <div style="margin-top: 18px;">
+              <h3 style="margin: 0 0 10px;">Model Asset Vault (.pth/.index/etc)</h3>
+              <form id="modelForm">
+                <div class="voice-editor">
+                  <div class="editor-header">
+                    <div class="badge" id="modelEditorBadge">New model asset</div>
+                    <div class="editor-meta" id="modelEditorHint">Upload model + optional index together (recommended) so they stay associated.</div>
+                  </div>
+                  <div class="voice-editor-grid">
+                    <div>
+                      <label for="modelName">Asset base name</label>
+                      <input id="modelName" placeholder="my-fish-rvc-model" />
+                    </div>
+                    <div>
+                      <label for="modelFile">Model file (.pth/.pt/...)</label>
+                      <input id="modelFile" type="file" />
+                    </div>
+                    <div>
+                      <label for="indexFile">Index file (.index, optional)</label>
+                      <input id="indexFile" type="file" />
+                    </div>
+                  </div>
+                  <div class="hint" id="modelBusyHint"></div>
+                  <div class="hint">For public/Cloudflare URLs, large model+index uploads are sent as two linked requests automatically.</div>
+                  <progress id="modelUploadProgress" max="100" value="0" style="width: 100%; display: none;"></progress>
+                  <div class="row">
+                    <button type="submit" id="saveModel">Save model + index</button>
+                    <button type="button" class="ghost" id="updateModel">Update selected asset</button>
+                    <button type="button" class="ghost" id="cancelModelEdit">Cancel edit</button>
+                    <button type="button" class="ghost" id="refreshModels">Refresh assets</button>
+                  </div>
+                </div>
+              </form>
+              <div class="status" id="modelStatus"></div>
+              <div class="list" id="modelList"></div>
+            </div>
           </div>
         </details>
 
@@ -650,6 +700,38 @@
             <label for="presetVoiceChoice">Engine voice option</label>
             <select id="presetVoiceChoice"></select>
             <div class="hint" id="voiceChoiceHint"></div>
+          </div>
+          <div>
+            <label for="presetModelAsset">Model asset (optional)</label>
+            <select id="presetModelAsset"></select>
+            <div class="hint">Use for engines that accept custom model file params.</div>
+          </div>
+          <div>
+            <label for="presetModelParam">Model param key</label>
+            <select id="presetModelParam"></select>
+            <input id="presetModelParamCustom" placeholder="Custom model param key" style="display: none; margin-top: 6px;" />
+            <div class="hint" id="modelParamHint">Auto-filled from detected engine params when possible.</div>
+          </div>
+          <div>
+            <label for="presetIndexAsset">Index asset (optional)</label>
+            <select id="presetIndexAsset"></select>
+          </div>
+          <div>
+            <label for="presetIndexParam">Index param key</label>
+            <select id="presetIndexParam"></select>
+            <input id="presetIndexParamCustom" placeholder="Custom index param key" style="display: none; margin-top: 6px;" />
+            <div class="hint" id="indexParamHint">Auto-filled from detected engine params when possible.</div>
+          </div>
+          <div>
+            <label>Param keys helper</label>
+            <button type="button" class="ghost" id="autoParamKeys">Auto-detect keys</button>
+            <div class="hint" style="margin-top: 6px;">
+              <label style="display: inline-flex; align-items: center; gap: 6px;">
+                <input type="checkbox" id="enableAdvancedParamKeys" />
+                Enable manual custom key entry (advanced)
+              </label>
+            </div>
+            <div class="hint" id="paramCatalogHint"></div>
           </div>
         </div>
         <div class="builder-grid" style="margin-top: 12px;">
@@ -816,10 +898,14 @@
       const state = {
         engines: [],
         voices: [],
+        assets: [],
         presets: [],
         voiceChoices: { choices: [], param: "" },
         paramDefaults: {},
         paramSpecs: {},
+        apiKey: "",
+        paramCatalog: [],
+        assetParamSuggestions: { model: [], index: [] },
         apiKey: "",
         transformer: {}
       };
@@ -828,13 +914,25 @@
         mode: "new",
         voiceId: "",
         sourceBlob: null,
+        sourceFileName: "",
+        sourceMimeType: "",
         audioBuffer: null,
         duration: 0,
         audioUrl: "",
         recordStream: null,
+        recordStreams: [],
+        recordMixContext: null,
         recorder: null,
         recordChunks: [],
+        recordStartMs: 0,
+        recordDiscard: false,
+        recordTicker: null,
         stopTimer: null
+      };
+
+      const modelEditorState = {
+        mode: "new",
+        assetId: ""
       };
 
       const audioContext = window.AudioContext ? new AudioContext() : null;
@@ -877,7 +975,23 @@
       const recordStartBtn = document.getElementById("recordStart");
       const recordStopBtn = document.getElementById("recordStop");
       const recordClearBtn = document.getElementById("recordClear");
+      const recordSource = document.getElementById("recordSource");
+      const recordMaxSeconds = document.getElementById("recordMaxSeconds");
       const recordStatus = document.getElementById("recordStatus");
+      const modelForm = document.getElementById("modelForm");
+      const modelStatus = document.getElementById("modelStatus");
+      const modelList = document.getElementById("modelList");
+      const refreshModelsBtn = document.getElementById("refreshModels");
+      const saveModelBtn = document.getElementById("saveModel");
+      const modelName = document.getElementById("modelName");
+      const modelFileInput = document.getElementById("modelFile");
+      const indexFileInput = document.getElementById("indexFile");
+      const updateModelBtn = document.getElementById("updateModel");
+      const cancelModelEditBtn = document.getElementById("cancelModelEdit");
+      const modelEditorBadge = document.getElementById("modelEditorBadge");
+      const modelEditorHint = document.getElementById("modelEditorHint");
+      const modelBusyHint = document.getElementById("modelBusyHint");
+      const modelUploadProgress = document.getElementById("modelUploadProgress");
 
       const presetName = document.getElementById("presetName");
       const presetNameHint = document.getElementById("presetNameHint");
@@ -890,6 +1004,17 @@
       const voiceSampleHint = document.getElementById("voiceSampleHint");
       const presetVoiceChoice = document.getElementById("presetVoiceChoice");
       const voiceChoiceHint = document.getElementById("voiceChoiceHint");
+      const presetModelAsset = document.getElementById("presetModelAsset");
+      const presetModelParam = document.getElementById("presetModelParam");
+      const presetModelParamCustom = document.getElementById("presetModelParamCustom");
+      const presetIndexAsset = document.getElementById("presetIndexAsset");
+      const presetIndexParam = document.getElementById("presetIndexParam");
+      const presetIndexParamCustom = document.getElementById("presetIndexParamCustom");
+      const modelParamHint = document.getElementById("modelParamHint");
+      const indexParamHint = document.getElementById("indexParamHint");
+      const autoParamKeysBtn = document.getElementById("autoParamKeys");
+      const enableAdvancedParamKeys = document.getElementById("enableAdvancedParamKeys");
+      const paramCatalogHint = document.getElementById("paramCatalogHint");
       const presetEmotionSample = document.getElementById("presetEmotionSample");
       const emotionSampleHint = document.getElementById("emotionSampleHint");
       const presetReferenceText = document.getElementById("presetReferenceText");
@@ -913,12 +1038,45 @@
       const cheatStatus = document.getElementById("cheatStatus");
 
       const requiredRefEngines = new Set(["IndexTTS2", "Qwen Voice Clone"]);
+      const RECORD_DEFAULT_MAX_SECONDS = 300;
+      const RECORD_MIN_SECONDS = 5;
+      const RECORD_MAX_SECONDS = 1800;
       let autoNameEnabled = true;
       let lastAutoName = "";
 
       function setStatus(el, message, isError) {
         el.textContent = message || "";
         el.classList.toggle("error", Boolean(isError));
+      }
+
+      function formatClock(totalSeconds) {
+        const safeSeconds = Math.max(0, Math.floor(totalSeconds || 0));
+        const mins = Math.floor(safeSeconds / 60).toString().padStart(2, "0");
+        const secs = (safeSeconds % 60).toString().padStart(2, "0");
+        return `${mins}:${secs}`;
+      }
+
+      function sanitizeRecordMaxSeconds(value) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+          return RECORD_DEFAULT_MAX_SECONDS;
+        }
+        return Math.max(RECORD_MIN_SECONDS, Math.min(RECORD_MAX_SECONDS, Math.round(numeric)));
+      }
+
+      function getRecordModeLabel(mode) {
+        if (mode === "system") return "System";
+        if (mode === "mix") return "Mic+System";
+        return "Mic";
+      }
+
+      function updateRecordIdleStatus(message = "") {
+        if (message) {
+          recordStatus.textContent = message;
+          return;
+        }
+        const maxSeconds = sanitizeRecordMaxSeconds(recordMaxSeconds.value);
+        recordStatus.textContent = `Ready. Source: ${getRecordModeLabel(recordSource.value)}. Max: ${formatClock(maxSeconds)}.`;
       }
 
       function slugify(value) {
@@ -968,13 +1126,72 @@
         return value;
       }
 
+      function parseApiErrorText(text, fallbackMessage) {
+        const lowered = (text || "").toLowerCase();
+        if (lowered.includes("error code 524") || lowered.includes("a timeout occurred")) {
+          return "Upload timed out (Cloudflare 524). The server may still be processing; refresh assets in a few seconds.";
+        }
+        return (text || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || fallbackMessage || "Request failed.";
+      }
+
       async function fetchJson(url, options = {}) {
         const res = await fetch(url, options);
         if (!res.ok) {
           const text = await res.text();
-          throw new Error(text || res.statusText);
+          throw new Error(parseApiErrorText(text, res.statusText));
         }
         return res.json();
+      }
+
+      function submitFormJsonWithProgress(url, formData, { method = "POST", onProgress = null } = {}) {
+        return new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open(method, url, true);
+
+          if (onProgress) {
+            onProgress(0, 0, 0, false);
+            xhr.upload.addEventListener("progress", (event) => {
+              const lengthComputable = Boolean(event.lengthComputable && event.total > 0);
+              const percent = lengthComputable ? Math.round((event.loaded / event.total) * 100) : null;
+              onProgress(percent, event.loaded || 0, event.total || 0, lengthComputable);
+            });
+          }
+
+          xhr.onerror = () => {
+            reject(new Error("Network error while uploading."));
+          };
+
+          xhr.onload = () => {
+            const responseText = xhr.responseText || "";
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                const parsed = responseText ? JSON.parse(responseText) : {};
+                resolve(parsed);
+              } catch (err) {
+                reject(new Error("Upload succeeded but response JSON could not be parsed."));
+              }
+              return;
+            }
+            reject(new Error(parseApiErrorText(responseText, xhr.statusText)));
+          };
+
+          xhr.send(formData);
+        });
+      }
+
+      function isPrivateHostname(hostname) {
+        const host = String(hostname || "").toLowerCase();
+        if (!host) return false;
+        if (host === "localhost" || host === "::1") return true;
+        if (/^127\./.test(host)) return true;
+        if (/^10\./.test(host)) return true;
+        if (/^192\.168\./.test(host)) return true;
+        const m = host.match(/^172\.(\d+)\./);
+        if (m) {
+          const second = Number(m[1]);
+          if (second >= 16 && second <= 31) return true;
+        }
+        return false;
       }
 
       function optionList(select, values, placeholder) {
@@ -999,6 +1216,238 @@
           return [];
         }
         return spec.choices.filter((value) => String(value).trim());
+      }
+
+      function setParamKeySelectOptions(selectEl, values, customInputEl, allowCustom = false) {
+        if (!selectEl) return;
+        const current = getParamKeyValue(selectEl, customInputEl);
+        selectEl.innerHTML = "";
+        const base = document.createElement("option");
+        base.value = "";
+        base.textContent = values.length ? "Select detected key" : "No detected key";
+        selectEl.appendChild(base);
+        values.forEach((value) => {
+          const opt = document.createElement("option");
+          opt.value = value;
+          opt.textContent = value;
+          selectEl.appendChild(opt);
+        });
+        if (allowCustom) {
+          const custom = document.createElement("option");
+          custom.value = "__custom__";
+          custom.textContent = "Custom key...";
+          selectEl.appendChild(custom);
+        }
+        if (current && values.includes(current)) {
+          selectEl.value = current;
+          customInputEl.style.display = "none";
+        } else if (current && allowCustom) {
+          selectEl.value = "__custom__";
+          customInputEl.style.display = "";
+          customInputEl.value = current;
+        } else {
+          selectEl.value = "";
+          customInputEl.style.display = "none";
+          customInputEl.value = "";
+        }
+      }
+
+      function getParamKeyValue(selectEl, customInputEl) {
+        if (!selectEl) return "";
+        if (selectEl.value === "__custom__") {
+          return (customInputEl?.value || "").trim();
+        }
+        return (selectEl.value || "").trim();
+      }
+
+      function setParamKeyValue(selectEl, customInputEl, value, allowCustom = false) {
+        const key = (value || "").trim();
+        if (!key) {
+          selectEl.value = "";
+          if (customInputEl) {
+            customInputEl.value = "";
+            customInputEl.style.display = "none";
+          }
+          return;
+        }
+        const options = Array.from(selectEl.options).map((opt) => opt.value);
+        if (options.includes(key)) {
+          selectEl.value = key;
+          if (customInputEl) {
+            customInputEl.style.display = "none";
+            customInputEl.value = "";
+          }
+          return;
+        }
+        if (allowCustom) {
+          selectEl.value = "__custom__";
+          if (customInputEl) {
+            customInputEl.style.display = "";
+            customInputEl.value = key;
+          }
+          return;
+        }
+        selectEl.value = "";
+        if (customInputEl) {
+          customInputEl.style.display = "none";
+          customInputEl.value = "";
+        }
+      }
+
+      function getEnginePrefix(engine) {
+        const prefixMap = {
+          "ChatterboxTTS": "chatterbox_",
+          "Chatterbox Multilingual": "chatterbox_mtl_",
+          "Chatterbox Turbo": "chatterbox_turbo_",
+          "Kokoro TTS": "kokoro_",
+          "Fish Speech": "fish_",
+          "IndexTTS": "indextts_",
+          "IndexTTS2": "indextts2_",
+          "F5-TTS": "f5_",
+          "Higgs Audio": "higgs_",
+          "VoxCPM": "voxcpm_",
+          "KittenTTS": "kitten_",
+          "Qwen Voice Design": "qwen_",
+          "Qwen Voice Clone": "qwen_",
+          "Qwen Custom Voice": "qwen_"
+        };
+        return prefixMap[engine] || "";
+      }
+
+      function rankAssetParamName(name, kind) {
+        const lower = String(name || "").toLowerCase();
+        let score = 0;
+        if (kind === "index") {
+          if (lower.includes("index")) score += 8;
+          if (lower.includes("ivf")) score += 4;
+          if (lower.includes("model")) score -= 2;
+        } else {
+          if (lower.includes("model")) score += 5;
+          if (lower.includes("speaker")) score += 4;
+          if (lower.includes("voice")) score += 3;
+          if (lower.includes("checkpoint") || lower.includes("ckpt")) score += 3;
+          if (lower.includes("index")) score -= 4;
+        }
+        if (lower.endsWith("_path")) score += 2;
+        if (lower.endsWith("_file")) score += 1;
+        return score;
+      }
+
+      function updateAssetParamSuggestions(engine = presetEngine.value) {
+        const params = Array.isArray(state.paramCatalog) ? state.paramCatalog : [];
+        const prefix = getEnginePrefix(engine);
+        const seenModel = new Set();
+        const seenIndex = new Set();
+        const modelCandidates = [];
+        const indexCandidates = [];
+
+        const pushCandidate = (arr, seen, name, kind) => {
+          if (!name || seen.has(name)) return;
+          seen.add(name);
+          arr.push({ name, score: rankAssetParamName(name, kind) });
+        };
+
+        params.forEach((param) => {
+          const name = String(param && param.name ? param.name : "").trim();
+          if (!name) return;
+          if (name === "text_input" || name === "tts_engine" || name === "audio_format") return;
+          if (prefix && !name.startsWith(prefix)) return;
+          const lower = name.toLowerCase();
+          if (/(ref_audio|emotion_audio)/.test(lower)) return;
+          const isFileLikeMeta = Boolean(param && param.is_file);
+          const isModelishName = /(model|checkpoint|ckpt|weight|speaker|voice|path|file|pth)/.test(lower);
+          const isIndexishName = /(index|indices|ivf)/.test(lower);
+          if (!isFileLikeMeta && !isModelishName && !isIndexishName) return;
+          if (/(index|indices|ivf)/.test(lower)) {
+            pushCandidate(indexCandidates, seenIndex, name, "index");
+            return;
+          }
+          if (isModelishName || isFileLikeMeta) {
+            pushCandidate(modelCandidates, seenModel, name, "model");
+          }
+        });
+
+        state.presets.forEach((preset) => {
+          if (!preset || preset.engine !== engine || !preset.params || typeof preset.params !== "object") return;
+          Object.keys(preset.params).forEach((name) => {
+            const lower = String(name || "").toLowerCase();
+            if (/(index|indices|ivf)/.test(lower)) {
+              pushCandidate(indexCandidates, seenIndex, name, "index");
+            } else {
+              pushCandidate(modelCandidates, seenModel, name, "model");
+            }
+          });
+        });
+
+        const sortByScore = (a, b) => {
+          if (b.score !== a.score) return b.score - a.score;
+          return a.name.localeCompare(b.name);
+        };
+        const modelNames = modelCandidates.sort(sortByScore).map((item) => item.name);
+        const indexNames = indexCandidates.sort(sortByScore).map((item) => item.name);
+        state.assetParamSuggestions = { model: modelNames, index: indexNames };
+        const allowCustom = Boolean(enableAdvancedParamKeys && enableAdvancedParamKeys.checked);
+        setParamKeySelectOptions(presetModelParam, modelNames, presetModelParamCustom, allowCustom);
+        setParamKeySelectOptions(presetIndexParam, indexNames, presetIndexParamCustom, allowCustom);
+        modelParamHint.textContent = modelNames.length
+          ? `Top suggestion: ${modelNames[0]}`
+          : "No model-like params detected for this engine.";
+        indexParamHint.textContent = indexNames.length
+          ? `Top suggestion: ${indexNames[0]}`
+          : "No index-like params detected for this engine.";
+        const totalDetected = modelNames.length + indexNames.length;
+        paramCatalogHint.textContent = totalDetected
+          ? `Detected ${totalDetected} candidate keys for ${engine || "this engine"}.`
+          : `No model/index candidate keys detected for ${engine || "this engine"} metadata.`;
+        updateAssetMappingUiState();
+      }
+
+      function autoFillAssetParamKeys(force = false) {
+        const modelCandidates = state.assetParamSuggestions.model || [];
+        const indexCandidates = state.assetParamSuggestions.index || [];
+        const allowCustom = Boolean(enableAdvancedParamKeys && enableAdvancedParamKeys.checked);
+        const currentModelKey = getParamKeyValue(presetModelParam, presetModelParamCustom);
+        const currentIndexKey = getParamKeyValue(presetIndexParam, presetIndexParamCustom);
+
+        if (presetModelAsset.value) {
+          if ((force || !currentModelKey) && modelCandidates.length) {
+            setParamKeyValue(presetModelParam, presetModelParamCustom, modelCandidates[0], allowCustom);
+          }
+        } else if (force) {
+          setParamKeyValue(presetModelParam, presetModelParamCustom, "", allowCustom);
+        }
+
+        if (presetIndexAsset.value) {
+          if ((force || !currentIndexKey) && indexCandidates.length) {
+            setParamKeyValue(presetIndexParam, presetIndexParamCustom, indexCandidates[0], allowCustom);
+          }
+        } else if (force) {
+          setParamKeyValue(presetIndexParam, presetIndexParamCustom, "", allowCustom);
+        }
+      }
+
+      function engineSupportsAssetMapping() {
+        const modelCandidates = state.assetParamSuggestions.model || [];
+        const indexCandidates = state.assetParamSuggestions.index || [];
+        return modelCandidates.length > 0 || indexCandidates.length > 0;
+      }
+
+      function updateAssetMappingUiState() {
+        const supports = engineSupportsAssetMapping();
+        const advanced = Boolean(enableAdvancedParamKeys && enableAdvancedParamKeys.checked);
+        const enabled = supports || advanced;
+        presetModelAsset.disabled = !enabled;
+        presetIndexAsset.disabled = !enabled;
+        presetModelParam.disabled = !enabled;
+        presetIndexParam.disabled = !enabled;
+        if (!enabled) {
+          presetModelAsset.value = "";
+          presetIndexAsset.value = "";
+          setParamKeyValue(presetModelParam, presetModelParamCustom, "", false);
+          setParamKeyValue(presetIndexParam, presetIndexParamCustom, "", false);
+          modelParamHint.textContent = "This engine does not expose model/index params in current metadata.";
+          indexParamHint.textContent = "Enable advanced manual keys only if you know exact backend parameter names.";
+        }
       }
 
       function updateQwenModelSize(engine) {
@@ -1334,7 +1783,18 @@
 
       function clearEditorStatus(message = "") {
         setStatus(voiceStatus, message);
-        recordStatus.textContent = "";
+        updateRecordIdleStatus();
+      }
+
+      function setTrimDuration(duration) {
+        const safe = Math.max(0, Number(duration) || 0);
+        editorState.duration = safe;
+        trimStart.max = safe;
+        trimEnd.max = safe;
+        trimStart.value = 0;
+        trimEnd.value = safe;
+        trimStartValue.value = 0;
+        trimEndValue.value = safe ? safe.toFixed(2) : 0;
       }
 
       function clearEditorAudio() {
@@ -1346,15 +1806,14 @@
           editorState.stopTimer = null;
         }
         editorState.sourceBlob = null;
+        editorState.sourceFileName = "";
+        editorState.sourceMimeType = "";
         editorState.audioBuffer = null;
         editorState.duration = 0;
         editorState.audioUrl = "";
         voicePreview.removeAttribute("src");
         voicePreview.load();
-        trimStart.value = 0;
-        trimEnd.value = 0;
-        trimStartValue.value = 0;
-        trimEndValue.value = 0;
+        setTrimDuration(0);
         selectionHint.textContent = "";
       }
 
@@ -1394,34 +1853,33 @@
         updateSelectionHint();
       }
 
-      async function loadAudioBlob(blob) {
+      async function decodeBlobToAudioBuffer(blob) {
+        if (!audioContext || !blob) return null;
+        try {
+          const arrayBuffer = await blob.arrayBuffer();
+          return await audioContext.decodeAudioData(arrayBuffer.slice(0));
+        } catch (err) {
+          return null;
+        }
+      }
+
+      async function loadAudioBlob(blob, fileName = "") {
         clearEditorStatus();
         if (!blob) return;
         if (editorState.audioUrl) {
           URL.revokeObjectURL(editorState.audioUrl);
         }
         editorState.sourceBlob = blob;
+        editorState.sourceFileName = fileName || editorState.sourceFileName || "voice-sample.wav";
+        editorState.sourceMimeType = blob.type || "";
         editorState.audioUrl = URL.createObjectURL(blob);
         voicePreview.src = editorState.audioUrl;
         voicePreview.load();
-        editorState.audioBuffer = null;
-        editorState.duration = 0;
-        try {
-          if (audioContext) {
-            const arrayBuffer = await blob.arrayBuffer();
-            editorState.audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-            editorState.duration = editorState.audioBuffer.duration || 0;
-          }
-        } catch (err) {
-          editorState.audioBuffer = null;
-        }
-        const duration = editorState.duration || Number(voicePreview.duration) || 0;
-        trimStart.max = duration;
-        trimEnd.max = duration;
-        trimStart.value = 0;
-        trimEnd.value = duration;
-        trimStartValue.value = 0;
-        trimEndValue.value = duration ? duration.toFixed(2) : 0;
+        editorState.audioBuffer = await decodeBlobToAudioBuffer(blob);
+        const duration = editorState.audioBuffer
+          ? Number(editorState.audioBuffer.duration) || 0
+          : Number(voicePreview.duration) || 0;
+        setTrimDuration(duration);
         updateSelectionHint();
       }
 
@@ -1487,17 +1945,55 @@
         return new Blob([view], { type: "audio/wav" });
       }
 
-      async function getTrimmedBlob() {
+      function extensionFromMimeType(mimeType) {
+        const type = (mimeType || "").toLowerCase();
+        if (type.includes("wav")) return "wav";
+        if (type.includes("mpeg") || type.includes("mp3")) return "mp3";
+        if (type.includes("flac")) return "flac";
+        if (type.includes("ogg")) return "ogg";
+        if (type.includes("mp4")) return "m4a";
+        if (type.includes("webm")) return "webm";
+        return "";
+      }
+
+      function extensionFromFileName(name) {
+        const fileName = String(name || "").trim();
+        const dot = fileName.lastIndexOf(".");
+        if (dot < 0) return "";
+        return fileName.slice(dot + 1).toLowerCase();
+      }
+
+      async function getTrimmedAudioAsset() {
         if (!editorState.sourceBlob) return null;
         if (!editorState.audioBuffer || !audioContext) {
-          return editorState.sourceBlob;
+          const extension = extensionFromFileName(editorState.sourceFileName)
+            || extensionFromMimeType(editorState.sourceMimeType)
+            || "wav";
+          return {
+            blob: editorState.sourceBlob,
+            extension,
+            mimeType: editorState.sourceBlob.type || editorState.sourceMimeType || "application/octet-stream"
+          };
         }
         const duration = editorState.duration || editorState.audioBuffer.duration || 0;
-        if (!duration) return editorState.sourceBlob;
+        if (!duration) {
+          const extension = extensionFromFileName(editorState.sourceFileName)
+            || extensionFromMimeType(editorState.sourceMimeType)
+            || "wav";
+          return {
+            blob: editorState.sourceBlob,
+            extension,
+            mimeType: editorState.sourceBlob.type || editorState.sourceMimeType || "application/octet-stream"
+          };
+        }
         const start = Math.max(0, Math.min(Number(trimStart.value) || 0, duration));
         const end = Math.max(start + 0.05, Math.min(Number(trimEnd.value) || duration, duration));
         const trimmed = audioBufferSlice(editorState.audioBuffer, start, end);
-        return audioBufferToWav(trimmed);
+        return {
+          blob: audioBufferToWav(trimmed),
+          extension: "wav",
+          mimeType: "audio/wav"
+        };
       }
 
       async function loadVoiceForEdit(voice) {
@@ -1509,28 +2005,174 @@
           const blob = await res.blob();
           voiceName.value = voice.label || "";
           setEditorMode("edit", voice);
-          await loadAudioBlob(blob);
+          await loadAudioBlob(blob, voice.filename || `${voice.id}.wav`);
         } catch (err) {
           setStatus(voiceStatus, err.message, true);
         }
+      }
+
+      function recorderOptions() {
+        if (typeof MediaRecorder === "undefined") return {};
+        const candidates = [
+          "audio/webm;codecs=opus",
+          "audio/webm",
+          "audio/mp4"
+        ];
+        for (const mimeType of candidates) {
+          if (MediaRecorder.isTypeSupported(mimeType)) {
+            return { mimeType };
+          }
+        }
+        return {};
+      }
+
+      function clearRecordTicker() {
+        if (editorState.recordTicker) {
+          window.clearInterval(editorState.recordTicker);
+          editorState.recordTicker = null;
+        }
+      }
+
+      function stopRecordStreams() {
+        editorState.recordStreams.forEach((stream) => {
+          stream.getTracks().forEach((track) => track.stop());
+        });
+        editorState.recordStreams = [];
+        editorState.recordStream = null;
+        if (editorState.recordMixContext) {
+          editorState.recordMixContext.close().catch(() => {});
+          editorState.recordMixContext = null;
+        }
+      }
+
+      function setRecordingButtons(isRecording) {
+        recordStartBtn.disabled = isRecording;
+        recordStopBtn.disabled = !isRecording;
+        recordSource.disabled = isRecording;
+        recordMaxSeconds.disabled = isRecording;
+      }
+
+      function requestStopRecording(discard = false) {
+        editorState.recordDiscard = Boolean(discard);
+        if (editorState.recorder && editorState.recorder.state !== "inactive") {
+          editorState.recorder.stop();
+        } else {
+          stopRecordStreams();
+          clearRecordTicker();
+          setRecordingButtons(false);
+          updateRecordIdleStatus();
+        }
+      }
+
+      async function buildRecordingInputs(mode) {
+        if (!navigator.mediaDevices) {
+          throw new Error("Recording is not supported in this browser.");
+        }
+        if (mode === "microphone") {
+          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          return { recordStream: micStream, sourceStreams: [micStream], mixContext: null };
+        }
+
+        const displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: true
+        });
+        const systemTracks = displayStream.getAudioTracks();
+        if (!systemTracks.length) {
+          displayStream.getTracks().forEach((track) => track.stop());
+          throw new Error("No system audio track was shared. Enable tab/system audio in the share dialog.");
+        }
+        if (mode === "system") {
+          return {
+            recordStream: new MediaStream(systemTracks),
+            sourceStreams: [displayStream],
+            mixContext: null
+          };
+        }
+
+        if (!window.AudioContext) {
+          displayStream.getTracks().forEach((track) => track.stop());
+          throw new Error("Microphone + system mix requires AudioContext support.");
+        }
+        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mixContext = new AudioContext();
+        const destination = mixContext.createMediaStreamDestination();
+        const systemSource = mixContext.createMediaStreamSource(displayStream);
+        const micSource = mixContext.createMediaStreamSource(micStream);
+        systemSource.connect(destination);
+        micSource.connect(destination);
+        return {
+          recordStream: destination.stream,
+          sourceStreams: [displayStream, micStream],
+          mixContext
+        };
       }
 
       function resetEditor() {
         setEditorMode("new");
         voiceName.value = "";
         voiceFileInput.value = "";
-        if (editorState.recorder && editorState.recorder.state !== "inactive") {
-          editorState.recorder.stop();
-        }
-        if (editorState.recordStream) {
-          editorState.recordStream.getTracks().forEach((track) => track.stop());
-          editorState.recordStream = null;
-        }
-        recordStartBtn.disabled = false;
-        recordStopBtn.disabled = true;
-        recordStatus.textContent = "";
+        requestStopRecording(true);
+        editorState.recordChunks = [];
+        editorState.recordStartMs = 0;
+        recordMaxSeconds.value = sanitizeRecordMaxSeconds(recordMaxSeconds.value || RECORD_DEFAULT_MAX_SECONDS);
+        setRecordingButtons(false);
         clearEditorAudio();
         clearEditorStatus();
+      }
+
+      function setModelEditorMode(mode, asset) {
+        modelEditorState.mode = mode;
+        modelEditorState.assetId = asset ? asset.id : "";
+        updateModelBtn.disabled = !modelEditorState.assetId;
+        if (mode === "edit" && asset) {
+          modelEditorBadge.textContent = "Editing model asset";
+          modelEditorHint.textContent = `Updating ${asset.label || asset.id} (${asset.kind || "asset"}). Upload a replacement file only if needed.`;
+          modelName.value = asset.label || "";
+          indexFileInput.value = "";
+        } else {
+          modelEditorBadge.textContent = "New model asset";
+          modelEditorHint.textContent = "Upload model + optional index together (recommended) so they stay associated.";
+          modelName.value = "";
+          modelFileInput.value = "";
+          indexFileInput.value = "";
+        }
+      }
+
+      function resetModelEditor(clearStatus = true) {
+        setModelEditorMode("new");
+        if (clearStatus) {
+          setStatus(modelStatus, "");
+        }
+        setStatus(modelBusyHint, "");
+      }
+
+      function setModelBusy(busy, message = "") {
+        saveModelBtn.disabled = busy;
+        updateModelBtn.disabled = busy || !modelEditorState.assetId;
+        refreshModelsBtn.disabled = busy;
+        cancelModelEditBtn.disabled = busy;
+        modelName.disabled = busy;
+        modelFileInput.disabled = busy;
+        indexFileInput.disabled = busy;
+        setStatus(modelBusyHint, message, false);
+        if (!busy) {
+          modelUploadProgress.style.display = "none";
+          modelUploadProgress.value = 0;
+        }
+      }
+
+      function updateModelUploadProgress(percent, message = "") {
+        modelUploadProgress.style.display = "";
+        if (Number.isFinite(percent)) {
+          modelUploadProgress.max = 100;
+          modelUploadProgress.value = Math.max(0, Math.min(100, percent));
+        } else {
+          modelUploadProgress.removeAttribute("value");
+        }
+        if (message) {
+          setStatus(modelBusyHint, message, false);
+        }
       }
 
       function renderVoices() {
@@ -1560,6 +2202,59 @@
           item.querySelector("[data-edit]").addEventListener("click", () => loadVoiceForEdit(voice));
           item.querySelector("[data-delete]").addEventListener("click", () => deleteVoice(voice.id));
           voiceList.appendChild(item);
+        });
+      }
+
+      function renderAssets() {
+        modelList.innerHTML = "";
+        if (!state.assets.length) {
+          modelList.innerHTML = "<div class=\"hint\">No model assets saved yet.</div>";
+          return;
+        }
+        const grouped = new Map();
+        state.assets.forEach((asset) => {
+          const pairId = asset.pair_id || asset.id;
+          if (!grouped.has(pairId)) {
+            grouped.set(pairId, []);
+          }
+          grouped.get(pairId).push(asset);
+        });
+        Array.from(grouped.values()).forEach((assets) => {
+          const titleAsset = assets[0];
+          const pairTitle = titleAsset.pair_label || titleAsset.label;
+          const item = document.createElement("div");
+          item.className = "list-item";
+          const rows = assets.map((asset) => `
+            <div class="row" style="grid-template-columns: 1fr auto auto auto; margin-top: 8px;">
+              <div class="hint">${asset.kind || "asset"}: ${asset.filename}</div>
+              <button data-edit="${asset.id}" class="ghost">Edit</button>
+              <button data-delete="${asset.id}" class="ghost">Delete</button>
+              <button data-download="${asset.id}" class="ghost">Download</button>
+            </div>
+          `).join("");
+          item.innerHTML = `
+            <div>
+              <strong>${pairTitle}</strong>
+              <div class="hint">${assets.length > 1 ? "paired model/index assets" : "single asset"}</div>
+            </div>
+            ${rows}
+          `;
+          item.querySelectorAll("[data-edit]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+              const asset = assets.find((entry) => entry.id === btn.getAttribute("data-edit"));
+              if (asset) setModelEditorMode("edit", asset);
+            });
+          });
+          item.querySelectorAll("[data-delete]").forEach((btn) => {
+            btn.addEventListener("click", () => deleteAsset(btn.getAttribute("data-delete")));
+          });
+          item.querySelectorAll("[data-download]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+              const assetId = btn.getAttribute("data-download");
+              window.open(`/v1/tts/assets/${encodeURIComponent(assetId)}/file`, "_blank", "noopener");
+            });
+          });
+          modelList.appendChild(item);
         });
       }
 
@@ -1764,7 +2459,10 @@
       async function refreshParamForm(engine) {
         if (!engine) return;
         const data = await fetchJson(`/v1/tts/params?engine=${encodeURIComponent(engine)}`);
-        renderParamForm(data.params || []);
+        state.paramCatalog = Array.isArray(data.params) ? data.params : [];
+        renderParamForm(state.paramCatalog);
+        updateAssetParamSuggestions(engine);
+        autoFillAssetParamKeys(false);
         updateQwenModelSize(engine);
         if (data.gradio_url) {
           gradioUrl.value = data.gradio_url;
@@ -1798,10 +2496,26 @@
         applyAutoPresetName();
       }
 
+      async function refreshAssets() {
+        const data = await fetchJson("/v1/tts/assets");
+        state.assets = data.assets || [];
+        const modelIds = state.assets
+          .filter((asset) => (asset.kind || "").toLowerCase() !== "index")
+          .map((asset) => asset.id);
+        const indexIds = state.assets
+          .filter((asset) => (asset.kind || "").toLowerCase() === "index")
+          .map((asset) => asset.id);
+        optionList(presetModelAsset, modelIds, "No model asset");
+        optionList(presetIndexAsset, indexIds, "No index asset");
+        renderAssets();
+      }
+
       async function refreshPresets() {
         const data = await fetchJson("/v1/tts/presets");
         state.presets = data.presets || [];
         renderPresets();
+        updateAssetParamSuggestions(presetEngine.value);
+        autoFillAssetParamKeys(false);
       }
 
       async function refreshApiKey() {
@@ -1861,6 +2575,15 @@
         }
       }
 
+      async function deleteAsset(assetId) {
+        try {
+          await fetchJson(`/v1/tts/assets/${encodeURIComponent(assetId)}`, { method: "DELETE" });
+          await refreshAssets();
+        } catch (err) {
+          setStatus(modelStatus, err.message, true);
+        }
+      }
+
       async function deletePreset(name) {
         try {
           await fetchJson(`/v1/tts/presets/${encodeURIComponent(name)}`, { method: "DELETE" });
@@ -1904,6 +2627,26 @@
           : (preset.engine === "Fish Speech S1" ? "fish_ref_text" : "");
         presetReferenceText.value = refTextKey ? (storedParams[refTextKey] || "") : "";
         presetTransformEnabled.value = preset.transform_enabled ? "true" : "false";
+        const allowCustom = Boolean(enableAdvancedParamKeys && enableAdvancedParamKeys.checked);
+        presetModelAsset.value = "";
+        setParamKeyValue(presetModelParam, presetModelParamCustom, "", allowCustom);
+        presetIndexAsset.value = "";
+        setParamKeyValue(presetIndexParam, presetIndexParamCustom, "", allowCustom);
+        const assetIds = new Set(state.assets.map((asset) => asset.id));
+        Object.entries(storedParams).forEach(([key, value]) => {
+          if (!assetIds.has(value)) return;
+          if (key.toLowerCase().includes("index")) {
+            if (!presetIndexAsset.value) {
+              presetIndexAsset.value = value;
+              setParamKeyValue(presetIndexParam, presetIndexParamCustom, key, allowCustom);
+            }
+            return;
+          }
+          if (!presetModelAsset.value) {
+            presetModelAsset.value = value;
+            setParamKeyValue(presetModelParam, presetModelParamCustom, key, allowCustom);
+          }
+        });
         presetParams.value = "";
         updateCheatSheet();
       }
@@ -1915,14 +2658,21 @@
           setStatus(voiceStatus, "Voice name is required.", true);
           return;
         }
-        const blob = await getTrimmedBlob();
-        if (!blob) {
+        const audioAsset = await getTrimmedAudioAsset();
+        if (!audioAsset) {
           setStatus(voiceStatus, "Upload or record audio first.", true);
           return;
         }
         const formData = new FormData();
         formData.append("name", label);
-        formData.append("file", new File([blob], "voice-sample.wav", { type: blob.type || "audio/wav" }));
+        formData.append(
+          "file",
+          new File(
+            [audioAsset.blob],
+            `voice-sample.${audioAsset.extension || "wav"}`,
+            { type: audioAsset.mimeType || "audio/wav" }
+          )
+        );
         try {
           await fetchJson("/v1/tts/voices", { method: "POST", body: formData });
           setStatus(voiceStatus, "Voice sample saved.");
@@ -1939,8 +2689,8 @@
           return;
         }
         const label = voiceName.value.trim();
-        const blob = await getTrimmedBlob();
-        if (!label && !blob) {
+        const audioAsset = await getTrimmedAudioAsset();
+        if (!label && !audioAsset) {
           setStatus(voiceStatus, "Provide a new name or audio update.", true);
           return;
         }
@@ -1948,8 +2698,15 @@
         if (label) {
           formData.append("name", label);
         }
-        if (blob) {
-          formData.append("file", new File([blob], `${editorState.voiceId}.wav`, { type: blob.type || "audio/wav" }));
+        if (audioAsset) {
+          formData.append(
+            "file",
+            new File(
+              [audioAsset.blob],
+              `${editorState.voiceId}.${audioAsset.extension || "wav"}`,
+              { type: audioAsset.mimeType || "audio/wav" }
+            )
+          );
         }
         try {
           await fetchJson(`/v1/tts/voices/${encodeURIComponent(editorState.voiceId)}`, {
@@ -1964,11 +2721,173 @@
         }
       });
 
+      modelForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const label = modelName.value.trim();
+        const modelFile = modelFileInput.files[0];
+        const indexFile = indexFileInput.files[0];
+        if (!label) {
+          setStatus(modelStatus, "Asset name is required.", true);
+          return;
+        }
+        if (!modelFile) {
+          setStatus(modelStatus, "Choose a model file first.", true);
+          return;
+        }
+        const totalBytes = (modelFile?.size || 0) + (indexFile?.size || 0);
+        const ninetyFiveMb = 95 * 1024 * 1024;
+        const publicHost = !isPrivateHostname(window.location.hostname);
+        const shouldSplitLinkedUploads = Boolean(indexFile) && (publicHost || totalBytes > ninetyFiveMb);
+
+        try {
+          setModelBusy(true, "Uploading model assets...");
+          if (shouldSplitLinkedUploads) {
+            const pairId = `pair-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+            const modelFormData = new FormData();
+            modelFormData.append("name", `${label} (model)`);
+            modelFormData.append("kind", "model");
+            modelFormData.append("pair_id", pairId);
+            modelFormData.append("pair_label", label);
+            modelFormData.append("file", modelFile);
+            await submitFormJsonWithProgress("/v1/tts/assets", modelFormData, {
+              method: "POST",
+              onProgress: (percent, loaded, total, lengthComputable) => {
+                if (lengthComputable && Number.isFinite(percent)) {
+                  const overall = Math.round(percent * 0.5);
+                  updateModelUploadProgress(overall, `Uploading model file... ${overall}%`);
+                } else if (loaded > 0) {
+                  const mb = (loaded / (1024 * 1024)).toFixed(1);
+                  const totalMb = total > 0 ? (total / (1024 * 1024)).toFixed(1) : "?";
+                  updateModelUploadProgress(null, `Uploading model file... ${mb}MB / ${totalMb}MB`);
+                } else {
+                  updateModelUploadProgress(null, "Uploading model file...");
+                }
+              }
+            });
+
+            const indexFormData = new FormData();
+            indexFormData.append("name", `${label} (index)`);
+            indexFormData.append("kind", "index");
+            indexFormData.append("pair_id", pairId);
+            indexFormData.append("pair_label", label);
+            indexFormData.append("file", indexFile);
+            await submitFormJsonWithProgress("/v1/tts/assets", indexFormData, {
+              method: "POST",
+              onProgress: (percent, loaded, total, lengthComputable) => {
+                if (lengthComputable && Number.isFinite(percent)) {
+                  const overall = 50 + Math.round(percent * 0.5);
+                  updateModelUploadProgress(overall, `Uploading index file... ${overall}%`);
+                } else if (loaded > 0) {
+                  const mb = (loaded / (1024 * 1024)).toFixed(1);
+                  const totalMb = total > 0 ? (total / (1024 * 1024)).toFixed(1) : "?";
+                  updateModelUploadProgress(null, `Uploading index file... ${mb}MB / ${totalMb}MB`);
+                } else {
+                  updateModelUploadProgress(null, "Uploading index file...");
+                }
+              }
+            });
+            updateModelUploadProgress(100, "Upload complete. Waiting for server to finish...");
+          } else {
+            const formData = new FormData();
+            formData.append("name", label);
+            formData.append("model_file", modelFile);
+            if (indexFile) {
+              formData.append("index_file", indexFile);
+            }
+            await submitFormJsonWithProgress("/v1/tts/assets/pair", formData, {
+              method: "POST",
+              onProgress: (percent, loaded, total, lengthComputable) => {
+                if (lengthComputable && Number.isFinite(percent)) {
+                  if (percent >= 100) {
+                    updateModelUploadProgress(100, "Upload complete. Waiting for server to finish...");
+                  } else {
+                    updateModelUploadProgress(percent, `Uploading model assets... ${percent}%`);
+                  }
+                } else if (loaded > 0) {
+                  const mb = (loaded / (1024 * 1024)).toFixed(1);
+                  const totalMb = total > 0 ? (total / (1024 * 1024)).toFixed(1) : "?";
+                  updateModelUploadProgress(null, `Uploading model assets... ${mb}MB / ${totalMb}MB`);
+                } else {
+                  updateModelUploadProgress(null, "Uploading model assets...");
+                }
+              }
+            });
+          }
+          setStatus(modelStatus, indexFile ? "Model and index saved." : "Model saved. Add an index later if needed.", false);
+          resetModelEditor(false);
+          await refreshAssets();
+        } catch (err) {
+          setStatus(modelStatus, err.message, true);
+        } finally {
+          setModelBusy(false, "");
+        }
+      });
+
+      updateModelBtn.addEventListener("click", async () => {
+        if (!modelEditorState.assetId) {
+          setStatus(modelStatus, "Select an asset to update first.", true);
+          return;
+        }
+        const label = modelName.value.trim();
+        const file = modelFileInput.files[0];
+        const formData = new FormData();
+        if (label) {
+          formData.append("name", label);
+        }
+        if (file) {
+          formData.append("file", file);
+        }
+        if (!label && !file) {
+          setStatus(modelStatus, "Provide a new label or replacement model file.", true);
+          return;
+        }
+        try {
+          setModelBusy(true, "Updating asset...");
+          if (file) {
+            await submitFormJsonWithProgress(`/v1/tts/assets/${encodeURIComponent(modelEditorState.assetId)}`, formData, {
+              method: "PUT",
+              onProgress: (percent, loaded, total, lengthComputable) => {
+                if (lengthComputable && Number.isFinite(percent)) {
+                  if (percent >= 100) {
+                    updateModelUploadProgress(100, "Upload complete. Waiting for server to finish...");
+                  } else {
+                    updateModelUploadProgress(percent, `Updating asset... ${percent}%`);
+                  }
+                } else if (loaded > 0) {
+                  const mb = (loaded / (1024 * 1024)).toFixed(1);
+                  const totalMb = total > 0 ? (total / (1024 * 1024)).toFixed(1) : "?";
+                  updateModelUploadProgress(null, `Updating asset... ${mb}MB / ${totalMb}MB`);
+                } else {
+                  updateModelUploadProgress(null, "Updating asset...");
+                }
+              }
+            });
+          } else {
+            await fetchJson(`/v1/tts/assets/${encodeURIComponent(modelEditorState.assetId)}`, {
+              method: "PUT",
+              body: formData
+            });
+          }
+          setStatus(modelStatus, "Model asset updated.");
+          resetModelEditor(false);
+          await refreshAssets();
+        } catch (err) {
+          setStatus(modelStatus, err.message, true);
+        } finally {
+          setModelBusy(false, "");
+        }
+      });
+
       cancelEditBtn.addEventListener("click", () => {
         resetEditor();
       });
+      cancelModelEditBtn.addEventListener("click", () => {
+        resetModelEditor();
+      });
 
       refreshVoicesBtn.addEventListener("click", refreshVoices);
+      refreshModelsBtn.addEventListener("click", refreshAssets);
       resetParamsBtn.addEventListener("click", resetParamForm);
       reconnectGradioBtn.addEventListener("click", reconnectGradio);
       updateGradioBtn.addEventListener("click", updateGradioTarget);
@@ -1977,7 +2896,20 @@
       voiceFileInput.addEventListener("change", async () => {
         const file = voiceFileInput.files[0];
         if (file) {
-          await loadAudioBlob(file);
+          const baseName = String(file.name || "upload").replace(/\.[^.]+$/, "");
+          if (String(file.type || "").startsWith("video/")) {
+            const decoded = await decodeBlobToAudioBuffer(file);
+            if (decoded) {
+              const extracted = audioBufferToWav(decoded);
+              await loadAudioBlob(extracted, `${baseName}.wav`);
+              setStatus(voiceStatus, "Audio track extracted from video.", false);
+              return;
+            }
+            setStatus(voiceStatus, "Video loaded directly. If trim length looks wrong, convert to audio first.", true);
+          } else {
+            setStatus(voiceStatus, "");
+          }
+          await loadAudioBlob(file, file.name || `${baseName}.wav`);
         }
       });
 
@@ -2017,70 +2949,105 @@
       });
 
       recordStartBtn.addEventListener("click", async () => {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          recordStatus.textContent = "Recording not supported in this browser.";
+        if (typeof MediaRecorder === "undefined") {
+          recordStatus.textContent = "Recording is not supported in this browser.";
           return;
         }
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          editorState.recordStream = stream;
+          const mode = recordSource.value || "microphone";
+          const maxSeconds = sanitizeRecordMaxSeconds(recordMaxSeconds.value);
+          recordMaxSeconds.value = maxSeconds;
+          const inputs = await buildRecordingInputs(mode);
+          editorState.recordStream = inputs.recordStream;
+          editorState.recordStreams = inputs.sourceStreams || [];
+          editorState.recordMixContext = inputs.mixContext || null;
           editorState.recordChunks = [];
-          editorState.recorder = new MediaRecorder(stream);
+          editorState.recorder = new MediaRecorder(inputs.recordStream, recorderOptions());
+          editorState.recordStartMs = Date.now();
+          editorState.recordDiscard = false;
+          clearRecordTicker();
+
           editorState.recorder.ondataavailable = (event) => {
             if (event.data && event.data.size > 0) {
               editorState.recordChunks.push(event.data);
             }
           };
           editorState.recorder.onstop = async () => {
-            const blob = new Blob(editorState.recordChunks, { type: editorState.recorder.mimeType || "audio/webm" });
-            await loadAudioBlob(blob);
-            recordStatus.textContent = "Recording captured.";
+            clearRecordTicker();
+            stopRecordStreams();
+            setRecordingButtons(false);
+            if (editorState.recordDiscard) {
+              editorState.recordDiscard = false;
+              editorState.recorder = null;
+              updateRecordIdleStatus();
+              return;
+            }
+
+            const rawBlob = new Blob(editorState.recordChunks, {
+              type: (editorState.recorder && editorState.recorder.mimeType) || "audio/webm"
+            });
+            let finalBlob = rawBlob;
+            let fileName = `recording-${Date.now()}.${extensionFromMimeType(rawBlob.type) || "webm"}`;
+            const decoded = await decodeBlobToAudioBuffer(rawBlob);
+            if (decoded) {
+              finalBlob = audioBufferToWav(decoded);
+              fileName = `recording-${Date.now()}.wav`;
+            }
+            await loadAudioBlob(finalBlob, fileName);
+            editorState.recorder = null;
+            updateRecordIdleStatus("Recording captured. Trim and save when ready.");
           };
-          editorState.recorder.start();
-          recordStatus.textContent = "Recording...";
-          recordStartBtn.disabled = true;
-          recordStopBtn.disabled = false;
+          editorState.recorder.start(1000);
+          setRecordingButtons(true);
+          recordStatus.textContent = `Recording ${getRecordModeLabel(mode)} 00:00 / ${formatClock(maxSeconds)}.`;
+          editorState.recordTicker = window.setInterval(() => {
+            const elapsed = (Date.now() - editorState.recordStartMs) / 1000;
+            const displayElapsed = Math.min(elapsed, maxSeconds);
+            recordStatus.textContent = `Recording ${getRecordModeLabel(mode)} ${formatClock(displayElapsed)} / ${formatClock(maxSeconds)}.`;
+            if (elapsed >= maxSeconds) {
+              recordStatus.textContent = `Max ${formatClock(maxSeconds)} reached. Finalizing clip...`;
+              requestStopRecording();
+            }
+          }, 200);
         } catch (err) {
-          recordStatus.textContent = "Microphone permission denied.";
+          stopRecordStreams();
+          clearRecordTicker();
+          setRecordingButtons(false);
+          recordStatus.textContent = err && err.message
+            ? err.message
+            : "Recording permission denied.";
         }
       });
 
       recordStopBtn.addEventListener("click", () => {
-        if (editorState.recorder && editorState.recorder.state !== "inactive") {
-          editorState.recorder.stop();
-        }
-        if (editorState.recordStream) {
-          editorState.recordStream.getTracks().forEach((track) => track.stop());
-          editorState.recordStream = null;
-        }
-        recordStartBtn.disabled = false;
-        recordStopBtn.disabled = true;
+        requestStopRecording();
       });
 
       recordClearBtn.addEventListener("click", () => {
-        if (editorState.recorder && editorState.recorder.state !== "inactive") {
-          editorState.recorder.stop();
-        }
-        if (editorState.recordStream) {
-          editorState.recordStream.getTracks().forEach((track) => track.stop());
-          editorState.recordStream = null;
-        }
-        recordStartBtn.disabled = false;
-        recordStopBtn.disabled = true;
-        recordStatus.textContent = "";
+        requestStopRecording(true);
+        editorState.recordChunks = [];
+        editorState.recordStartMs = 0;
         clearEditorAudio();
+        updateRecordIdleStatus();
+      });
+
+      recordSource.addEventListener("change", () => {
+        if (!recordStartBtn.disabled) {
+          updateRecordIdleStatus();
+        }
+      });
+
+      recordMaxSeconds.addEventListener("change", () => {
+        recordMaxSeconds.value = sanitizeRecordMaxSeconds(recordMaxSeconds.value);
+        if (!recordStartBtn.disabled) {
+          updateRecordIdleStatus();
+        }
       });
 
       voicePreview.addEventListener("loadedmetadata", () => {
         if (editorState.audioBuffer) return;
         const duration = Number(voicePreview.duration) || 0;
-        editorState.duration = duration;
-        trimStart.max = duration;
-        trimEnd.max = duration;
-        trimStart.value = 0;
-        trimEnd.value = duration;
-        trimStartValue.value = 0;
-        trimEndValue.value = duration ? duration.toFixed(2) : 0;
+        setTrimDuration(duration);
         updateSelectionHint();
       });
 
@@ -2095,6 +3062,43 @@
       presetVoiceSample.addEventListener("change", () => {
         applyAutoPresetName();
         updateCheatSheet();
+      });
+
+      presetModelAsset.addEventListener("change", () => {
+        autoFillAssetParamKeys(false);
+      });
+
+      presetIndexAsset.addEventListener("change", () => {
+        autoFillAssetParamKeys(false);
+      });
+
+      presetModelParam.addEventListener("change", () => {
+        if (presetModelParam.value === "__custom__") {
+          presetModelParamCustom.style.display = "";
+          presetModelParamCustom.focus();
+        } else {
+          presetModelParamCustom.style.display = "none";
+        }
+      });
+
+      presetIndexParam.addEventListener("change", () => {
+        if (presetIndexParam.value === "__custom__") {
+          presetIndexParamCustom.style.display = "";
+          presetIndexParamCustom.focus();
+        } else {
+          presetIndexParamCustom.style.display = "none";
+        }
+      });
+
+      autoParamKeysBtn.addEventListener("click", () => {
+        updateAssetParamSuggestions(presetEngine.value);
+        autoFillAssetParamKeys(true);
+      });
+
+      enableAdvancedParamKeys.addEventListener("change", () => {
+        updateAssetParamSuggestions(presetEngine.value);
+        autoFillAssetParamKeys(false);
+        updateAssetMappingUiState();
       });
 
       presetName.addEventListener("input", () => {
@@ -2152,6 +3156,63 @@
           params.indextts2_emotion_audio = presetEmotionSample.value;
         }
         const referenceText = presetReferenceText.value.trim();
+        const supportsAssetMapping = engineSupportsAssetMapping();
+        const advancedAssetKeys = Boolean(enableAdvancedParamKeys && enableAdvancedParamKeys.checked);
+        const modelAssetId = presetModelAsset.value || "";
+        const indexAssetId = presetIndexAsset.value || "";
+        const shouldApplyAssetMapping = supportsAssetMapping || advancedAssetKeys;
+        if ((modelAssetId || indexAssetId) && !shouldApplyAssetMapping) {
+          setStatus(
+            presetStatus,
+            `Asset mapping is not available for ${engine} in current metadata. Save without model/index assets, or enable advanced manual keys.`,
+            true
+          );
+          return;
+        }
+        if (
+          (modelAssetId && !getParamKeyValue(presetModelParam, presetModelParamCustom)) ||
+          (indexAssetId && !getParamKeyValue(presetIndexParam, presetIndexParamCustom))
+        ) {
+          autoFillAssetParamKeys(false);
+        }
+        const modelParamKey = getParamKeyValue(presetModelParam, presetModelParamCustom);
+        if (modelAssetId && !modelParamKey) {
+          const top = (state.assetParamSuggestions.model || [])[0];
+          setStatus(
+            presetStatus,
+            top
+              ? `Model param key is required. Try "${top}" or click Auto-detect keys.`
+              : "Model param key is required. Click Auto-detect keys and choose one from suggestions.",
+            true
+          );
+          return;
+        }
+        if (modelParamKey && !modelAssetId) {
+          setStatus(presetStatus, "Select a model asset for the model param key.", true);
+          return;
+        }
+        if (shouldApplyAssetMapping && modelAssetId && modelParamKey) {
+          params[modelParamKey] = modelAssetId;
+        }
+        const indexParamKey = getParamKeyValue(presetIndexParam, presetIndexParamCustom);
+        if (indexAssetId && !indexParamKey) {
+          const top = (state.assetParamSuggestions.index || [])[0];
+          setStatus(
+            presetStatus,
+            top
+              ? `Index param key is required. Try "${top}" or click Auto-detect keys.`
+              : "Index param key is required. Click Auto-detect keys and choose one from suggestions.",
+            true
+          );
+          return;
+        }
+        if (indexParamKey && !indexAssetId) {
+          setStatus(presetStatus, "Select an index asset for the index param key.", true);
+          return;
+        }
+        if (shouldApplyAssetMapping && indexAssetId && indexParamKey) {
+          params[indexParamKey] = indexAssetId;
+        }
         const existing = state.presets.find((preset) => preset.name === name);
         const overwrite = existing
           ? window.confirm(
@@ -2193,6 +3254,10 @@
         presetEmotionSample.value = "";
         presetReferenceText.value = "";
         presetTransformEnabled.value = "false";
+        presetModelAsset.value = "";
+        setParamKeyValue(presetModelParam, presetModelParamCustom, "", Boolean(enableAdvancedParamKeys && enableAdvancedParamKeys.checked));
+        presetIndexAsset.value = "";
+        setParamKeyValue(presetIndexParam, presetIndexParamCustom, "", Boolean(enableAdvancedParamKeys && enableAdvancedParamKeys.checked));
         resetParamForm();
         setStatus(presetStatus, "");
         autoNameEnabled = true;
@@ -2204,12 +3269,14 @@
       async function bootstrap() {
         baseUrl.value = window.location.origin + "/v1";
         resetEditor();
+        resetModelEditor();
         try {
           await refreshApiKey();
           await refreshTransformer();
           await refreshGradioStatus();
           await refreshEngines();
           await refreshVoices();
+          await refreshAssets();
           await refreshPresets();
         } catch (err) {
           setStatus(engineStatus, err.message, true);

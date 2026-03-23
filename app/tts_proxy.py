@@ -166,6 +166,8 @@ DATA_DIR = APP_DIR / "data"
 ENV_FILE = APP_DIR.parent / "ENVIRONMENT"
 VOICE_DIR = DATA_DIR / "voices"
 VOICE_INDEX_FILE = DATA_DIR / "voices.json"
+ASSET_DIR = DATA_DIR / "assets"
+ASSET_INDEX_FILE = DATA_DIR / "assets.json"
 PRESET_FILE = DATA_DIR / "presets.json"
 API_KEY_FILE = DATA_DIR / "api_key.txt"
 TRANSFORMER_CONFIG_FILE = DATA_DIR / "transformer.json"
@@ -211,6 +213,7 @@ def require_admin(credentials: HTTPBasicCredentials = Depends(security)) -> None
 
 
 def ensure_data_dirs() -> None:
+    ASSET_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     VOICE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -343,6 +346,28 @@ def load_voices() -> list[dict]:
 
 def save_voices(voices: list[dict]) -> None:
     save_json(VOICE_INDEX_FILE, voices)
+
+
+def load_assets() -> list[dict]:
+    ensure_data_dirs()
+    return load_json(ASSET_INDEX_FILE, [])
+
+
+def save_assets(assets: list[dict]) -> None:
+    save_json(ASSET_INDEX_FILE, assets)
+
+
+def save_upload_to_asset(
+    asset_id: str,
+    upload_file: UploadFile,
+) -> str:
+    ensure_data_dirs()
+    extension = Path(upload_file.filename or "").suffix.lower() or ".bin"
+    filename = f"{asset_id}{extension}"
+    target_path = ASSET_DIR / filename
+    with target_path.open("wb") as buffer:
+        shutil.copyfileobj(upload_file.file, buffer)
+    return filename
 
 
 def load_presets() -> list[dict]:
@@ -480,19 +505,37 @@ def find_voice(voice_id: str) -> Optional[dict]:
     return None
 
 
+def find_asset(asset_id: str) -> Optional[dict]:
+    for asset in load_assets():
+        if asset.get("id") == asset_id:
+            return asset
+    return None
+
+
 def resolve_voice_path(voice: dict) -> Path:
     return VOICE_DIR / voice["filename"]
 
 
-def resolve_voice_reference(value: Optional[str]) -> Optional[str]:
+def resolve_asset_path(asset: dict) -> Path:
+    return ASSET_DIR / asset["filename"]
+
+
+def resolve_resource_reference(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
     voice = find_voice(value)
     if voice:
         return str(resolve_voice_path(voice))
+    asset = find_asset(value)
+    if asset:
+        return str(resolve_asset_path(asset))
     if os.path.isfile(value):
         return value
     return None
+
+
+def resolve_voice_reference(value: Optional[str]) -> Optional[str]:
+    return resolve_resource_reference(value)
 
 
 def parse_param_string(param: str) -> dict:
@@ -863,12 +906,16 @@ def build_params(req: OpenAITTSSpeechRequest, preset: Optional[dict], voice_samp
         params[voice_param] = req.voice
 
     for key, value in list(params.items()):
-        if key in FILE_PARAM_NAMES or key.endswith("_ref_audio") or key.endswith("_emotion_audio"):
-            resolved = resolve_voice_reference(value) if isinstance(value, str) else None
-            if resolved:
+        if not isinstance(value, str):
+            continue
+        resolved = resolve_resource_reference(value)
+        if resolved:
+            if is_file_like_param(key):
                 params[key] = handle_file(resolved)
-            elif value in ("", None):
-                params[key] = None
+            else:
+                params[key] = resolved
+        elif is_file_like_param(key) and value in ("", None):
+            params[key] = None
 
     if engine in REQUIRED_REF_ENGINES:
         required_ref_param = ENGINE_REF_PARAM.get(engine)
@@ -918,6 +965,34 @@ def call_ultimate_tts(engine: str, params: dict[str, Any]) -> tuple[bytes, str]:
 
 GRADIO_URL = normalize_gradio_url(GRADIO_URL)
 apply_gradio_env_override()
+
+
+def is_file_like_param(param_name: str) -> bool:
+    if (
+        param_name in FILE_PARAM_NAMES
+        or param_name.endswith("_ref_audio")
+        or param_name.endswith("_emotion_audio")
+    ):
+        return True
+    meta = DEFAULT_PARAM_META or {}
+    info = meta.get(param_name) or {}
+    component = str(info.get("component") or "")
+    type_name = str(info.get("type") or "")
+    python_type = str(info.get("python_type") or "")
+    lowered = " ".join([component, type_name, python_type]).lower()
+    return "filepath" in lowered or "audio" in component.lower() or component.lower() == "file"
+
+
+def preset_uses_resource_id(preset: dict, resource_id: str) -> bool:
+    if not resource_id:
+        return False
+    params = preset.get("params")
+    if not isinstance(params, dict):
+        return False
+    for value in params.values():
+        if isinstance(value, str) and value == resource_id:
+            return True
+    return False
 
 
 @app.get("/health")
@@ -1022,6 +1097,10 @@ def voices() -> dict:
     return {"voices": load_voices()}
 
 
+@app.get("/v1/tts/assets", dependencies=[Depends(require_admin)])
+def assets() -> dict:
+    return {"assets": load_assets()}
+
 @app.get("/v1/tts/api-key", dependencies=[Depends(require_admin)])
 def api_key_status() -> dict:
     return {"api_key": get_api_key()}
@@ -1089,6 +1168,138 @@ def update_voice(voice_id: str, name: str = Form(default=""), file: Optional[Upl
     return {"voice": voice}
 
 
+@app.post("/v1/tts/assets", dependencies=[Depends(require_admin)])
+def create_asset(
+    name: str = Form(default=""),
+    kind: str = Form(default="model"),
+    pair_id: str = Form(default=""),
+    pair_label: str = Form(default=""),
+    file: UploadFile = File(...),
+) -> dict:
+    ensure_data_dirs()
+    assets = load_assets()
+    existing = {asset["id"] for asset in assets}
+    label = name.strip() or Path(file.filename or "asset").stem
+    asset_id = unique_slug(label, existing)
+    filename = save_upload_to_asset(asset_id, file)
+
+    asset_data = {
+        "id": asset_id,
+        "label": label,
+        "kind": kind.strip() or "model",
+        "pair_id": pair_id.strip() or "",
+        "pair_label": pair_label.strip() or "",
+        "filename": filename,
+        "created_at": now_iso(),
+    }
+    assets.append(asset_data)
+    save_assets(assets)
+    return {"asset": asset_data}
+
+
+@app.post("/v1/tts/assets/pair", dependencies=[Depends(require_admin)])
+def create_asset_pair(
+    name: str = Form(default=""),
+    model_file: UploadFile = File(...),
+    index_file: Optional[UploadFile] = File(default=None),
+) -> dict:
+    ensure_data_dirs()
+    assets = load_assets()
+    existing = {asset["id"] for asset in assets}
+
+    base_label = name.strip() or Path(model_file.filename or "model").stem
+    existing_pair_ids = {str(asset.get("pair_id") or "").strip() for asset in assets if str(asset.get("pair_id") or "").strip()}
+    pair_id = slugify(f"{base_label}-pair")
+    pair_index = 2
+    while pair_id in existing_pair_ids:
+        pair_id = f"{slugify(f'{base_label}-pair')}-{pair_index}"
+        pair_index += 1
+
+    model_id = unique_slug(f"{base_label}-model", existing)
+    existing.add(model_id)
+    model_filename = save_upload_to_asset(model_id, model_file)
+    model_asset = {
+        "id": model_id,
+        "label": f"{base_label} (model)",
+        "kind": "model",
+        "pair_id": pair_id,
+        "pair_label": base_label,
+        "filename": model_filename,
+        "created_at": now_iso(),
+    }
+    assets.append(model_asset)
+
+    index_asset = None
+    if index_file is not None:
+        index_id = unique_slug(f"{base_label}-index", existing)
+        existing.add(index_id)
+        index_filename = save_upload_to_asset(index_id, index_file)
+        index_asset = {
+            "id": index_id,
+            "label": f"{base_label} (index)",
+            "kind": "index",
+            "pair_id": pair_id,
+            "pair_label": base_label,
+            "filename": index_filename,
+            "created_at": now_iso(),
+        }
+        assets.append(index_asset)
+
+    save_assets(assets)
+    return {"pair_id": pair_id, "pair_label": base_label, "model": model_asset, "index": index_asset}
+
+
+@app.put("/v1/tts/assets/{asset_id}", dependencies=[Depends(require_admin)])
+def update_asset(
+    asset_id: str,
+    name: str = Form(default=""),
+    kind: str = Form(default=""),
+    pair_id: str = Form(default=""),
+    pair_label: str = Form(default=""),
+    file: Optional[UploadFile] = File(default=None),
+) -> dict:
+    assets = load_assets()
+    asset = next((a for a in assets if a.get("id") == asset_id), None)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    updated = False
+    label = name.strip()
+    if label:
+        asset["label"] = label
+        updated = True
+
+    kind_value = kind.strip()
+    if kind_value:
+        asset["kind"] = kind_value
+        updated = True
+
+    if pair_id.strip() or pair_label.strip():
+        asset["pair_id"] = pair_id.strip()
+        asset["pair_label"] = pair_label.strip()
+        updated = True
+
+    if file is not None:
+        ensure_data_dirs()
+        old_path = resolve_asset_path(asset)
+        extension = Path(file.filename or "").suffix.lower() or Path(asset["filename"]).suffix or ".bin"
+        filename = f"{asset_id}{extension}"
+        target_path = ASSET_DIR / filename
+        with target_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        if old_path.exists() and old_path != target_path:
+            old_path.unlink()
+        asset["filename"] = filename
+        updated = True
+
+    if not updated:
+        raise HTTPException(status_code=400, detail="No changes provided")
+
+    asset["updated_at"] = now_iso()
+    save_assets(assets)
+    return {"asset": asset}
+
+
 @app.get("/v1/tts/voices/{voice_id}/file", dependencies=[Depends(require_admin)])
 def voice_file(voice_id: str) -> Response:
     voice = find_voice(voice_id)
@@ -1100,12 +1311,25 @@ def voice_file(voice_id: str) -> Response:
     return FileResponse(file_path)
 
 
+@app.get("/v1/tts/assets/{asset_id}/file", dependencies=[Depends(require_admin)])
+def asset_file(asset_id: str) -> Response:
+    asset = find_asset(asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    file_path = resolve_asset_path(asset)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Asset file not found")
+    return FileResponse(file_path)
+
+
 @app.delete("/v1/tts/voices/{voice_id}", dependencies=[Depends(require_admin)])
 def delete_voice(voice_id: str) -> dict:
     voices = load_voices()
     presets = load_presets()
     if any(preset.get("voice_id") == voice_id for preset in presets):
         raise HTTPException(status_code=409, detail="Voice is used by a preset")
+    if any(preset_uses_resource_id(preset, voice_id) for preset in presets):
+        raise HTTPException(status_code=409, detail="Voice is referenced in preset params")
     voice = next((v for v in voices if v.get("id") == voice_id), None)
     remaining = [voice_record for voice_record in voices if voice_record.get("id") != voice_id]
     if len(remaining) == len(voices):
@@ -1115,6 +1339,27 @@ def delete_voice(voice_id: str) -> dict:
         file_path = resolve_voice_path(voice)
         if file_path.exists():
             file_path.unlink()
+    return {"status": "deleted"}
+
+
+@app.delete("/v1/tts/assets/{asset_id}", dependencies=[Depends(require_admin)])
+def delete_asset(asset_id: str) -> dict:
+    assets = load_assets()
+    presets = load_presets()
+    if any(preset_uses_resource_id(preset, asset_id) for preset in presets):
+        raise HTTPException(status_code=409, detail="Asset is referenced in preset params")
+
+    asset = next((a for a in assets if a.get("id") == asset_id), None)
+    remaining = [a for a in assets if a.get("id") != asset_id]
+    if len(remaining) == len(assets):
+        raise HTTPException(status_code=404, detail="Asset not found")
+    save_assets(remaining)
+
+    if asset:
+        file_path = resolve_asset_path(asset)
+        if file_path.exists():
+            file_path.unlink()
+
     return {"status": "deleted"}
 
 
@@ -1264,7 +1509,6 @@ def speech(req: OpenAITTSSpeechRequest, request: Request) -> Response:
     engine = resolve_engine(req, preset)
     if preset and req.model and normalize_engine_name(preset.get("engine")) != normalize_engine_name(req.model):
         raise HTTPException(status_code=400, detail="Preset engine does not match model")
-
     params = build_params(req, preset, voice_sample, engine)
     audio_bytes, media_type = call_ultimate_tts(engine, params)
     return Response(content=audio_bytes, media_type=media_type)
