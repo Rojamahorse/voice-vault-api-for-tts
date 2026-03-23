@@ -6,37 +6,42 @@ import secrets
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Any
+from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Request, Depends
-from fastapi.responses import Response, HTMLResponse, FileResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from pydantic import BaseModel
 import httpx
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from gradio_client import Client, handle_file
+from pydantic import BaseModel
+
 
 DEFAULT_GRADIO_URL = "http://127.0.0.1:7860/"
-GRADIO_URL = os.environ.get("GRADIO_URL", DEFAULT_GRADIO_URL)
 DEFAULT_TTS_ENGINE = os.environ.get("DEFAULT_TTS_ENGINE", "Chatterbox Turbo")
 DEFAULT_FORMAT = os.environ.get("DEFAULT_FORMAT", "mp3")
 GRADIO_API_NAME = os.environ.get("GRADIO_API_NAME", "/generate_unified_tts")
 CHATTERBOX_TURBO_REF_AUDIO = os.environ.get("CHATTERBOX_TURBO_REF_AUDIO", "")
-AUTO_LOAD_ENGINE = os.environ.get("AUTO_LOAD_ENGINE", "true").lower() in (
-    "1",
-    "true",
-    "yes",
-    "on",
-)
+AUTO_LOAD_ENGINE = os.environ.get("AUTO_LOAD_ENGINE", "true").lower() in ("1", "true", "yes", "on")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+DEFAULT_TRANSFORMER_URL = os.environ.get("TRANSFORMER_URL", "http://127.0.0.1:42026/")
+
+GRADIO_URL = os.environ.get("GRADIO_URL", DEFAULT_GRADIO_URL)
+
+ENGINE_ALIASES = {
+    "Fish Speech": "Fish Speech S1",
+    "Fish Speech S1": "Fish Speech S1",
+    "Fish Speech S2 Pro": "Fish Speech S2 Pro",
+}
 
 KNOWN_ENGINES = [
     "ChatterboxTTS",
     "Chatterbox Multilingual",
     "Chatterbox Turbo",
     "Kokoro TTS",
-    "Fish Speech",
+    "Fish Speech S1",
+    "Fish Speech S2 Pro",
     "IndexTTS",
     "IndexTTS2",
     "F5-TTS",
@@ -53,7 +58,8 @@ ENGINE_LOAD_API = {
     "Chatterbox Multilingual": "/handle_load_chatterbox_multilingual",
     "Chatterbox Turbo": "/handle_load_chatterbox_turbo",
     "Kokoro TTS": "/handle_load_kokoro",
-    "Fish Speech": "/handle_load_fish",
+    "Fish Speech S1": "/handle_load_fish",
+    "Fish Speech S2 Pro": "/handle_load_fish_s2",
     "IndexTTS": "/handle_load_indextts",
     "IndexTTS2": "/handle_load_indextts2",
     "F5-TTS": "/handle_f5_load",
@@ -67,7 +73,8 @@ ENGINE_PARAM_PREFIX = {
     "Chatterbox Multilingual": "chatterbox_mtl_",
     "Chatterbox Turbo": "chatterbox_turbo_",
     "Kokoro TTS": "kokoro_",
-    "Fish Speech": "fish_",
+    "Fish Speech S1": "fish_",
+    "Fish Speech S2 Pro": "fish_s2_",
     "IndexTTS": "indextts_",
     "IndexTTS2": "indextts2_",
     "F5-TTS": "f5_",
@@ -83,7 +90,8 @@ ENGINE_REF_PARAM = {
     "ChatterboxTTS": "chatterbox_ref_audio",
     "Chatterbox Multilingual": "chatterbox_mtl_ref_audio",
     "Chatterbox Turbo": "chatterbox_turbo_ref_audio",
-    "Fish Speech": "fish_ref_audio",
+    "Fish Speech S1": "fish_ref_audio",
+    "Fish Speech S2 Pro": "fish_s2_ref_audio",
     "IndexTTS": "indextts_ref_audio",
     "IndexTTS2": "indextts2_ref_audio",
     "F5-TTS": "f5_ref_audio",
@@ -92,10 +100,16 @@ ENGINE_REF_PARAM = {
     "Qwen Voice Clone": "qwen_ref_audio",
 }
 
-REQUIRED_REF_ENGINES = {
-    "IndexTTS2",
-    "Qwen Voice Clone",
+ENGINE_REF_TEXT_PARAM = {
+    "Fish Speech S1": "fish_ref_text",
+    "Fish Speech S2 Pro": "fish_s2_ref_text",
+    "F5-TTS": "f5_ref_text",
+    "Higgs Audio": "higgs_ref_text",
+    "VoxCPM": "voxcpm_ref_text",
+    "Qwen Voice Clone": "qwen_ref_text",
 }
+
+REQUIRED_REF_ENGINES = {"IndexTTS2"}
 
 PARAM_CHOICES = {
     "indextts2_emotion_mode": ["audio_reference", "vector_control", "text_description"],
@@ -119,9 +133,26 @@ KITTEN_VOICES = [
     "expr-voice-5-f",
 ]
 
-LOADED_ENGINE = None
-DEFAULT_PARAMS = None
-DEFAULT_PARAM_META = None
+FILE_PARAM_NAMES = {
+    "audio_file",
+    "files",
+    "chatterbox_ref_audio",
+    "chatterbox_mtl_ref_audio",
+    "chatterbox_turbo_ref_audio",
+    "fish_ref_audio",
+    "fish_s2_ref_audio",
+    "indextts_ref_audio",
+    "indextts2_ref_audio",
+    "indextts2_emotion_audio",
+    "f5_ref_audio",
+    "higgs_ref_audio",
+    "voxcpm_ref_audio",
+    "qwen_ref_audio",
+}
+
+LOADED_ENGINE: Optional[str] = None
+DEFAULT_PARAMS: Optional[dict[str, Any]] = None
+DEFAULT_PARAM_META: Optional[dict[str, dict[str, Any]]] = None
 GRADIO_STATUS = {"connected": False, "message": "", "url": GRADIO_URL}
 
 logging.basicConfig(level=LOG_LEVEL)
@@ -137,23 +168,24 @@ VOICE_DIR = DATA_DIR / "voices"
 VOICE_INDEX_FILE = DATA_DIR / "voices.json"
 PRESET_FILE = DATA_DIR / "presets.json"
 API_KEY_FILE = DATA_DIR / "api_key.txt"
+TRANSFORMER_CONFIG_FILE = DATA_DIR / "transformer.json"
 UI_INDEX = APP_DIR / "ui" / "index.html"
 
-FILE_PARAM_NAMES = {
-    "audio_file",
-    "files",
-    "chatterbox_ref_audio",
-    "chatterbox_mtl_ref_audio",
-    "chatterbox_turbo_ref_audio",
-    "fish_ref_audio",
-    "indextts_ref_audio",
-    "indextts2_ref_audio",
-    "indextts2_emotion_audio",
-    "f5_ref_audio",
-    "higgs_ref_audio",
-    "voxcpm_ref_audio",
-    "qwen_ref_audio",
-}
+
+class OpenAITTSSpeechRequest(BaseModel):
+    model: Optional[str] = None
+    input: str
+    voice: Optional[str] = None
+    response_format: Optional[str] = None
+    speed: Optional[float] = None
+    reference_text: Optional[str] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    repetition_penalty: Optional[float] = None
+    max_tokens: Optional[int] = None
+    seed: Optional[int] = None
+    transform: Optional[bool] = None
+
 
 def admin_auth_enabled() -> bool:
     return bool(ADMIN_USERNAME and ADMIN_PASSWORD)
@@ -179,8 +211,8 @@ def require_admin(credentials: HTTPBasicCredentials = Depends(security)) -> None
 
 
 def ensure_data_dirs() -> None:
-    VOICE_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    VOICE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -214,11 +246,11 @@ def read_env_value(key: str) -> Optional[str]:
 
 
 def persist_env_value(key: str, value: str) -> None:
-    lines = []
+    lines: list[str] = []
     replaced = False
     if ENV_FILE.exists():
         lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
-    new_lines = []
+    new_lines: list[str] = []
     for line in lines:
         if line.strip().startswith(f"{key}="):
             new_lines.append(f"{key}={value}")
@@ -230,6 +262,21 @@ def persist_env_value(key: str, value: str) -> None:
             new_lines.append("")
         new_lines.append(f"{key}={value}")
     ENV_FILE.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+
+def normalize_gradio_url(url: str, default_url: str = DEFAULT_GRADIO_URL) -> str:
+    cleaned = url.strip()
+    if not cleaned:
+        return default_url
+    if not re.match(r"^https?://", cleaned):
+        cleaned = f"http://{cleaned}"
+    if not cleaned.endswith("/"):
+        cleaned = f"{cleaned}/"
+    return cleaned
+
+
+def normalize_service_url(url: str, default_url: str) -> str:
+    return normalize_gradio_url(url, default_url=default_url)
 
 
 def apply_gradio_env_override() -> None:
@@ -256,6 +303,39 @@ def unique_slug(value: str, existing: set[str]) -> str:
     return f"{candidate}-{index}"
 
 
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def read_api_key() -> str:
+    if not API_KEY_FILE.exists():
+        return ""
+    return API_KEY_FILE.read_text(encoding="utf-8").strip()
+
+
+def write_api_key(value: str) -> None:
+    API_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    API_KEY_FILE.write_text(value.strip() + "\n", encoding="utf-8")
+
+
+def get_api_key() -> str:
+    return read_api_key()
+
+
+def require_api_key(request: Request) -> None:
+    api_key = get_api_key()
+    if not api_key:
+        return
+    auth_header = request.headers.get("authorization", "")
+    token = ""
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        token = request.headers.get("x-api-key", "").strip()
+    if token != api_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
 def load_voices() -> list[dict]:
     ensure_data_dirs()
     return load_json(VOICE_INDEX_FILE, [])
@@ -274,11 +354,90 @@ def save_presets(presets: list[dict]) -> None:
     save_json(PRESET_FILE, presets)
 
 
+def default_transformer_config() -> dict[str, Any]:
+    return {
+        "enabled": False,
+        "url": normalize_service_url(DEFAULT_TRANSFORMER_URL, DEFAULT_TRANSFORMER_URL),
+        "mode": "balanced",
+        "tone_profile": "warm",
+        "target_engine": "Fish Speech S2 Pro",
+        "fail_open": False,
+    }
+
+
+def load_transformer_config() -> dict[str, Any]:
+    ensure_data_dirs()
+    config = load_json(TRANSFORMER_CONFIG_FILE, default_transformer_config())
+    merged = {**default_transformer_config(), **config}
+    merged["url"] = normalize_service_url(merged.get("url", ""), DEFAULT_TRANSFORMER_URL)
+    return merged
+
+
+def save_transformer_config(config: dict[str, Any]) -> dict[str, Any]:
+    merged = {**default_transformer_config(), **config}
+    merged["url"] = normalize_service_url(merged.get("url", ""), DEFAULT_TRANSFORMER_URL)
+    save_json(TRANSFORMER_CONFIG_FILE, merged)
+    return merged
+
+
+def fetch_transformer_health(config: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    cfg = config or load_transformer_config()
+    try:
+        response = httpx.get(f"{cfg['url'].rstrip('/')}/health", timeout=5.0)
+        response.raise_for_status()
+        payload = response.json()
+        return {"connected": True, "message": payload.get("status", "ok"), "url": cfg["url"]}
+    except Exception as exc:
+        return {"connected": False, "message": str(exc), "url": cfg["url"]}
+
+
+def call_transformer(text: str, config: dict[str, Any]) -> dict[str, Any]:
+    try:
+        response = httpx.post(
+            f"{config['url'].rstrip('/')}/v1/text/transform",
+            json={
+                "text": text,
+                "mode": config.get("mode") or "balanced",
+                "tone_profile": config.get("tone_profile") or "warm",
+            },
+            timeout=15.0,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Transformer call failed: {exc}")
+    payload = response.json()
+    transformed = str(payload.get("transformed_text") or "").strip()
+    if not transformed:
+        raise HTTPException(status_code=502, detail="Transformer returned empty text")
+    return {
+        "text": text,
+        "transformed_text": transformed,
+        "mode": payload.get("mode") or config.get("mode"),
+        "tone_profile": payload.get("tone_profile") or config.get("tone_profile"),
+    }
+
+
+def normalize_engine_name(engine: Optional[str]) -> Optional[str]:
+    if not engine:
+        return None
+    cleaned = str(engine).strip()
+    if not cleaned:
+        return None
+    return ENGINE_ALIASES.get(cleaned, cleaned)
+
+
+def upstream_engine_name(engine: Optional[str]) -> Optional[str]:
+    canonical = normalize_engine_name(engine)
+    if canonical == "Fish Speech S1":
+        return "Fish Speech"
+    return canonical
+
+
 def find_preset(name: str) -> Optional[dict]:
-    name = name.strip()
+    target = name.strip()
     for preset in load_presets():
-        if preset.get("name") == name:
-            return preset
+        if preset.get("name") == target:
+            return normalize_preset_record(preset)
     return None
 
 
@@ -286,19 +445,31 @@ def preset_label(preset: dict) -> str:
     return str(preset.get("label") or preset.get("name") or "").strip()
 
 
+def normalize_preset_record(preset: dict) -> dict:
+    normalized = dict(preset)
+    normalized["engine"] = normalize_engine_name(normalized.get("engine")) or normalized.get("engine")
+    normalized["transform_enabled"] = bool(normalized.get("transform_enabled", False))
+    return normalized
+
+
 def find_preset_by_label(label: str, engine: Optional[str]) -> Optional[dict]:
     target = label.strip().lower()
     if not target:
         return None
-    presets = [preset for preset in load_presets() if preset_label(preset).lower() == target]
-    if not presets:
+    normalized_engine = normalize_engine_name(engine)
+    matches = []
+    for preset in load_presets():
+        current = normalize_preset_record(preset)
+        if preset_label(current).lower() == target:
+            matches.append(current)
+    if not matches:
         return None
-    if engine:
-        for preset in presets:
-            if preset.get("engine") == engine:
+    if normalized_engine:
+        for preset in matches:
+            if preset.get("engine") == normalized_engine:
                 return preset
-    if len(presets) == 1:
-        return presets[0]
+    if len(matches) == 1:
+        return matches[0]
     return None
 
 
@@ -354,61 +525,19 @@ def normalize_meta_type(value: Any) -> Optional[str]:
     return None
 
 
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-def normalize_gradio_url(url: str, default_url: str = DEFAULT_GRADIO_URL) -> str:
-    cleaned = url.strip()
-    if not cleaned:
-        return default_url
-    if not re.match(r"^https?://", cleaned):
-        cleaned = f"http://{cleaned}"
-    if not cleaned.endswith("/"):
-        cleaned = f"{cleaned}/"
-    return cleaned
-
-GRADIO_URL = normalize_gradio_url(GRADIO_URL)
-apply_gradio_env_override()
-
-def read_api_key() -> str:
-    if not API_KEY_FILE.exists():
-        return ""
-    return API_KEY_FILE.read_text(encoding="utf-8").strip()
-
-
-def write_api_key(value: str) -> None:
-    API_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    API_KEY_FILE.write_text(value.strip() + "\n", encoding="utf-8")
-
-
-def get_api_key() -> str:
-    return read_api_key()
-
-
-def require_api_key(request: Request) -> None:
-    api_key = get_api_key()
-    if not api_key:
-        return
-    auth_header = request.headers.get("authorization", "")
-    token = ""
-    if auth_header.lower().startswith("bearer "):
-        token = auth_header.split(" ", 1)[1].strip()
-    if not token:
-        token = request.headers.get("x-api-key", "").strip()
-    if token != api_key:
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
-
 def reset_gradio_cache() -> None:
     global DEFAULT_PARAMS, DEFAULT_PARAM_META, LOADED_ENGINE
     DEFAULT_PARAMS = None
     DEFAULT_PARAM_META = None
     LOADED_ENGINE = None
 
+
 def extract_description(param: dict) -> str:
     type_field = param.get("type")
     if isinstance(type_field, dict):
         return str(type_field.get("description") or "")
     return ""
+
 
 def extract_numeric_bounds(param: dict) -> tuple[Optional[float], Optional[float], Optional[float]]:
     def _to_float(value: Any) -> Optional[float]:
@@ -433,43 +562,6 @@ def extract_numeric_bounds(param: dict) -> tuple[Optional[float], Optional[float
             max_value = _to_float(match.group(2))
     return min_value, max_value, step_value
 
-class OpenAITTSSpeechRequest(BaseModel):
-    model: Optional[str] = None
-    input: str
-    voice: Optional[str] = None
-    response_format: Optional[str] = None
-    speed: Optional[float] = None
-
-
-def resolve_engine(req: OpenAITTSSpeechRequest, preset: Optional[dict]) -> str:
-    supported = list_supported_engines()
-    if req.model and req.model in supported:
-        return req.model
-    if preset:
-        return preset.get("engine", DEFAULT_TTS_ENGINE)
-    if req.voice and req.voice in supported:
-        return req.voice
-    return DEFAULT_TTS_ENGINE
-
-
-def get_output_format(req: OpenAITTSSpeechRequest) -> str:
-    out_fmt = (req.response_format or DEFAULT_FORMAT).lower()
-    if out_fmt not in ("mp3", "wav"):
-        return DEFAULT_FORMAT
-    return out_fmt
-
-
-def resolve_output_format(req: OpenAITTSSpeechRequest, preset: Optional[dict]) -> str:
-    if req.response_format:
-        return get_output_format(req)
-    if preset:
-        preset_format = (preset.get("params") or {}).get("audio_format")
-        if isinstance(preset_format, str):
-            preset_format = preset_format.lower()
-            if preset_format in ("mp3", "wav"):
-                return preset_format
-    return DEFAULT_FORMAT
-
 
 def extract_choices(param: dict) -> list:
     for key in ("choices", "enum", "values"):
@@ -486,7 +578,7 @@ def fetch_default_params() -> tuple[dict, dict, str, bool]:
         resp = httpx.get(info_url, timeout=10.0)
         resp.raise_for_status()
     except Exception as exc:
-        message = f"Gradio API not reachable at {GRADIO_URL}. Start the TTS service and click Reconnect."
+        message = f"Ultimate TTS is not reachable at {GRADIO_URL}. Start the backend and reconnect."
         logger.warning("Failed to fetch Gradio info: %s", exc)
         return {}, {}, message, False
 
@@ -494,22 +586,18 @@ def fetch_default_params() -> tuple[dict, dict, str, bool]:
     endpoints = data.get("named_endpoints") or {}
     endpoint = endpoints.get(GRADIO_API_NAME)
     if not endpoint:
-        message = f"Gradio endpoint {GRADIO_API_NAME} not found at {GRADIO_URL}. Update GRADIO_API_NAME or target."
+        message = f"Gradio endpoint {GRADIO_API_NAME} not found at {GRADIO_URL}."
         logger.warning("Endpoint %s not found in Gradio info", GRADIO_API_NAME)
         return {}, {}, message, False
 
     params = endpoint.get("parameters_info") or endpoint.get("parameters") or []
-    defaults = {}
-    meta = {}
+    defaults: dict[str, Any] = {}
+    meta: dict[str, dict[str, Any]] = {}
     for raw_param in params:
         param = normalize_param(raw_param)
         if not param:
             continue
-        name = (
-            param.get("name")
-            or param.get("parameter_name")
-            or param.get("label")
-        )
+        name = param.get("name") or param.get("parameter_name") or param.get("label")
         if not name:
             continue
         value = param.get("default")
@@ -534,62 +622,7 @@ def fetch_default_params() -> tuple[dict, dict, str, bool]:
             "step": step_value,
             "example": param.get("example_input"),
         }
-    return defaults, meta, "Loaded from Gradio metadata.", True
-
-
-def get_engine_choices_from_meta() -> list[str]:
-    if DEFAULT_PARAM_META is None or not DEFAULT_PARAM_META:
-        get_default_params()
-    meta = DEFAULT_PARAM_META or {}
-    engine_meta = meta.get("tts_engine") or {}
-    choices = engine_meta.get("choices") or []
-    if isinstance(choices, list):
-        return [str(choice) for choice in choices if str(choice).strip()]
-    return []
-
-
-def list_supported_engines() -> list[str]:
-    engines = list(KNOWN_ENGINES)
-    for choice in get_engine_choices_from_meta():
-        if choice not in engines:
-            engines.append(choice)
-    return engines
-
-
-def coerce_value(value, python_type: Optional[str]):
-    if value is None or python_type is None:
-        return value
-    if python_type == "float" and isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return value
-    if python_type == "int" and isinstance(value, str):
-        try:
-            return int(float(value))
-        except ValueError:
-            return value
-    if python_type == "bool" and isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in ("1", "true", "yes", "on"):
-            return True
-        if lowered in ("0", "false", "no", "off"):
-            return False
-    return value
-
-
-def parse_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        return value.strip().lower() in ("1", "true", "yes", "on")
-    return False
-
-
-def is_numeric_string(value: str) -> bool:
-    return bool(re.match(r"^\s*-?\d+(\.\d+)?([eE][-+]?\d+)?\s*$", value))
+    return defaults, meta, "Loaded from Ultimate TTS metadata.", True
 
 
 def get_default_params(force_refresh: bool = False) -> dict:
@@ -599,93 +632,83 @@ def get_default_params(force_refresh: bool = False) -> dict:
         DEFAULT_PARAMS = defaults
         DEFAULT_PARAM_META = meta
         GRADIO_STATUS = {"connected": connected, "message": message, "url": GRADIO_URL}
-    defaults = DEFAULT_PARAMS.copy()
-    for key, value in defaults.items():
+    defaults = dict(DEFAULT_PARAMS or {})
+    for key, value in list(defaults.items()):
+        meta = (DEFAULT_PARAM_META or {}).get(key, {})
+        component = meta.get("component")
         if value == "" and (
             key in FILE_PARAM_NAMES
             or key.endswith("_ref_audio")
             or key.endswith("_emotion_audio")
         ):
             defaults[key] = None
-        if value == "" and key.endswith("_language"):
-            defaults[key] = "en"
-        meta = DEFAULT_PARAM_META.get(key, {})
-        component = meta.get("component")
         if value == "" and component == "Checkbox":
             defaults[key] = False
-        if isinstance(defaults[key], str) and component == "Checkbox":
-            lowered = defaults[key].strip().lower()
-            if lowered in ("true", "1", "yes", "on"):
-                defaults[key] = True
-            elif lowered in ("false", "0", "no", "off", ""):
-                defaults[key] = False
         if value == "" and component in ("Slider", "Number"):
-            if "seed" in key:
-                defaults[key] = None
-            else:
-                defaults[key] = None
+            defaults[key] = None
         if value == "":
             choices = meta.get("choices") or []
             if choices:
                 defaults[key] = choices[0]
-        defaults[key] = coerce_value(defaults[key], meta.get("python_type"))
-        if isinstance(defaults[key], str) and is_numeric_string(defaults[key]):
-            if meta.get("type") == "number" or meta.get("component") in (
-                "Slider",
-                "Number",
-            ):
-                try:
-                    defaults[key] = float(defaults[key])
-                except ValueError:
-                    logger.warning("Failed to coerce %s=%r", key, defaults[key])
-        if isinstance(defaults[key], str) and is_numeric_string(defaults[key]):
-            try:
-                defaults[key] = float(defaults[key])
-            except ValueError:
-                logger.warning("Failed to coerce numeric string %s=%r", key, defaults[key])
-        if meta.get("type") == "number" or meta.get("component") in ("Slider", "Number"):
-            if isinstance(defaults[key], str):
-                raw_default = meta.get("raw_default")
-                if isinstance(raw_default, (int, float)):
-                    defaults[key] = float(raw_default)
-                elif is_numeric_string(raw_default if isinstance(raw_default, str) else ""):
-                    defaults[key] = float(raw_default)
-                else:
-                    defaults[key] = None
     return defaults
+
+
+def get_engine_choices_from_meta() -> list[str]:
+    get_default_params()
+    meta = DEFAULT_PARAM_META or {}
+    engine_meta = meta.get("tts_engine") or {}
+    choices = engine_meta.get("choices") or []
+    result: list[str] = []
+    for choice in choices:
+        normalized = normalize_engine_name(str(choice))
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result
+
+
+def list_supported_engines() -> list[str]:
+    engines: list[str] = []
+    for engine in KNOWN_ENGINES:
+        if engine not in engines:
+            engines.append(engine)
+    for choice in get_engine_choices_from_meta():
+        if choice not in engines:
+            engines.append(choice)
+    if "Fish Speech" in engines:
+        engines.remove("Fish Speech")
+    return engines
 
 
 def list_param_specs(engine: Optional[str] = None) -> list[dict]:
     defaults = get_default_params()
     meta = DEFAULT_PARAM_META or {}
     params: list[dict] = []
-    prefix = ENGINE_PARAM_PREFIX.get(engine, "") if engine else ""
+    normalized_engine = normalize_engine_name(engine) if engine else None
+    prefix = ENGINE_PARAM_PREFIX.get(normalized_engine, "") if normalized_engine else ""
     for name, value in defaults.items():
         if name in ("text_input", "tts_engine"):
             continue
-        if engine and prefix and not name.startswith(prefix) and name != "audio_format":
+        if normalized_engine and prefix and not name.startswith(prefix) and name != "audio_format":
             continue
         info = meta.get(name, {})
         choices = info.get("choices") or PARAM_CHOICES.get(name)
-        is_file = (
-            name in FILE_PARAM_NAMES
-            or name.endswith("_ref_audio")
-            or name.endswith("_emotion_audio")
+        is_file = name in FILE_PARAM_NAMES or name.endswith("_ref_audio") or name.endswith("_emotion_audio")
+        params.append(
+            {
+                "name": name,
+                "default": value,
+                "label": info.get("label"),
+                "component": info.get("component"),
+                "type": info.get("type"),
+                "python_type": info.get("python_type"),
+                "choices": choices,
+                "is_file": is_file,
+                "description": info.get("description"),
+                "min": info.get("min"),
+                "max": info.get("max"),
+                "step": info.get("step"),
+            }
         )
-        params.append({
-            "name": name,
-            "default": value,
-            "label": info.get("label"),
-            "component": info.get("component"),
-            "type": info.get("type"),
-            "python_type": info.get("python_type"),
-            "choices": choices,
-            "is_file": is_file,
-            "description": info.get("description"),
-            "min": info.get("min"),
-            "max": info.get("max"),
-            "step": info.get("step"),
-        })
     return params
 
 
@@ -701,9 +724,10 @@ def fetch_kokoro_voice_choices() -> list[str]:
 
 
 def fetch_voice_choices(engine: str) -> dict:
+    normalized_engine = normalize_engine_name(engine)
+
     def meta_choices(param_name: str) -> list[str]:
-        if DEFAULT_PARAM_META is None or not DEFAULT_PARAM_META:
-            get_default_params()
+        get_default_params()
         meta = DEFAULT_PARAM_META or {}
         info = meta.get(param_name) or {}
         choices = info.get("choices") or []
@@ -711,18 +735,189 @@ def fetch_voice_choices(engine: str) -> dict:
             return [str(choice) for choice in choices if str(choice).strip()]
         return []
 
-    if engine == "Kokoro TTS":
-        return {"param": ENGINE_VOICE_PARAM[engine], "choices": fetch_kokoro_voice_choices()}
-    if engine in ENGINE_VOICE_PARAM:
-        param = ENGINE_VOICE_PARAM[engine]
+    if normalized_engine == "Kokoro TTS":
+        return {"param": ENGINE_VOICE_PARAM[normalized_engine], "choices": fetch_kokoro_voice_choices()}
+    if normalized_engine in ENGINE_VOICE_PARAM:
+        param = ENGINE_VOICE_PARAM[normalized_engine]
         choices = meta_choices(param)
         if choices:
             return {"param": param, "choices": choices}
-    if engine == "KittenTTS":
-        return {"param": ENGINE_VOICE_PARAM[engine], "choices": KITTEN_VOICES}
-    if engine == "Higgs Audio":
-        return {"param": ENGINE_VOICE_PARAM[engine], "choices": ["EMPTY"]}
+    if normalized_engine == "KittenTTS":
+        return {"param": ENGINE_VOICE_PARAM[normalized_engine], "choices": KITTEN_VOICES}
+    if normalized_engine == "Higgs Audio":
+        return {"param": ENGINE_VOICE_PARAM[normalized_engine], "choices": ["EMPTY"]}
     return {"param": "", "choices": []}
+
+
+def get_output_format(req: OpenAITTSSpeechRequest) -> str:
+    out_fmt = (req.response_format or DEFAULT_FORMAT).lower()
+    if out_fmt not in ("mp3", "wav"):
+        return DEFAULT_FORMAT
+    return out_fmt
+
+
+def resolve_output_format(req: OpenAITTSSpeechRequest, preset: Optional[dict]) -> str:
+    if req.response_format:
+        return get_output_format(req)
+    if preset:
+        preset_format = (preset.get("params") or {}).get("audio_format")
+        if isinstance(preset_format, str) and preset_format.lower() in ("mp3", "wav"):
+            return preset_format.lower()
+    return DEFAULT_FORMAT
+
+
+def resolve_engine(req: OpenAITTSSpeechRequest, preset: Optional[dict]) -> str:
+    supported = list_supported_engines()
+    requested_model = normalize_engine_name(req.model)
+    if requested_model and requested_model in supported:
+        return requested_model
+    if preset:
+        preset_engine = normalize_engine_name(preset.get("engine"))
+        if preset_engine:
+            return preset_engine
+    requested_voice_engine = normalize_engine_name(req.voice)
+    if requested_voice_engine and requested_voice_engine in supported:
+        return requested_voice_engine
+    default_engine = normalize_engine_name(DEFAULT_TTS_ENGINE)
+    return default_engine if default_engine in supported else supported[0]
+
+
+def collect_request_overrides(req: OpenAITTSSpeechRequest, engine: str) -> dict[str, Any]:
+    overrides: dict[str, Any] = {}
+    prefix = ENGINE_PARAM_PREFIX.get(engine)
+    if not prefix:
+        return overrides
+    if req.reference_text is not None:
+        ref_text_param = ENGINE_REF_TEXT_PARAM.get(engine)
+        if ref_text_param:
+            overrides[ref_text_param] = req.reference_text
+    if req.temperature is not None:
+        overrides[f"{prefix}temperature"] = req.temperature
+    if req.top_p is not None:
+        overrides[f"{prefix}top_p"] = req.top_p
+    if req.repetition_penalty is not None:
+        overrides[f"{prefix}repetition_penalty"] = req.repetition_penalty
+    if req.max_tokens is not None:
+        token_key = f"{prefix}max_tokens"
+        if engine == "Fish Speech S2 Pro":
+            token_key = "fish_s2_max_tokens"
+        overrides[token_key] = req.max_tokens
+    if req.seed is not None:
+        overrides[f"{prefix}seed"] = req.seed
+    return overrides
+
+
+def should_transform_text(engine: str, preset: Optional[dict], req: OpenAITTSSpeechRequest) -> bool:
+    config = load_transformer_config()
+    if not config.get("enabled"):
+        return False
+    target_engine = normalize_engine_name(config.get("target_engine")) or "Fish Speech S2 Pro"
+    if engine != target_engine:
+        return False
+    if req.transform is not None:
+        return bool(req.transform)
+    if preset and preset.get("transform_enabled"):
+        return True
+    return True
+
+
+def build_params(req: OpenAITTSSpeechRequest, preset: Optional[dict], voice_sample: Optional[dict], engine: str) -> dict[str, Any]:
+    params = get_default_params().copy()
+    if preset and isinstance(preset.get("params"), dict):
+        params.update(preset["params"])
+
+    text_input = (req.input or "").strip()
+    if not text_input:
+        raise HTTPException(status_code=400, detail="Missing 'input' text")
+
+    if should_transform_text(engine, preset, req):
+        transformed = call_transformer(text_input, load_transformer_config())
+        text_input = transformed["transformed_text"]
+
+    params.update(
+        {
+            "text_input": text_input,
+            "tts_engine": upstream_engine_name(engine),
+            "audio_format": resolve_output_format(req, preset),
+        }
+    )
+
+    ref_param = ENGINE_REF_PARAM.get(engine)
+    ref_text_param = ENGINE_REF_TEXT_PARAM.get(engine)
+
+    if voice_sample and ref_param:
+        params[ref_param] = handle_file(str(resolve_voice_path(voice_sample)))
+
+    if preset and preset.get("voice_id") and ref_param:
+        voice = find_voice(preset["voice_id"])
+        if voice:
+            params[ref_param] = handle_file(str(resolve_voice_path(voice)))
+
+    if req.reference_text is not None and ref_text_param:
+        params[ref_text_param] = req.reference_text
+
+    params.update(collect_request_overrides(req, engine))
+
+    if req.voice and not preset and engine in ENGINE_VOICE_PARAM:
+        voice_param = ENGINE_VOICE_PARAM[engine]
+        params[voice_param] = req.voice
+
+    for key, value in list(params.items()):
+        if key in FILE_PARAM_NAMES or key.endswith("_ref_audio") or key.endswith("_emotion_audio"):
+            resolved = resolve_voice_reference(value) if isinstance(value, str) else None
+            if resolved:
+                params[key] = handle_file(resolved)
+            elif value in ("", None):
+                params[key] = None
+
+    if engine in REQUIRED_REF_ENGINES:
+        required_ref_param = ENGINE_REF_PARAM.get(engine)
+        if required_ref_param and not params.get(required_ref_param):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Reference audio is required for {engine}. Save a voice sample and attach it to the preset.",
+            )
+
+    if engine == "Chatterbox Turbo" and CHATTERBOX_TURBO_REF_AUDIO:
+        if not os.path.isfile(CHATTERBOX_TURBO_REF_AUDIO):
+            raise HTTPException(status_code=500, detail="CHATTERBOX_TURBO_REF_AUDIO path does not exist")
+        params["chatterbox_turbo_ref_audio"] = handle_file(CHATTERBOX_TURBO_REF_AUDIO)
+
+    return params
+
+
+def call_ultimate_tts(engine: str, params: dict[str, Any]) -> tuple[bytes, str]:
+    global LOADED_ENGINE
+    try:
+        client = Client(GRADIO_URL)
+        load_api = ENGINE_LOAD_API.get(engine)
+        if AUTO_LOAD_ENGINE and load_api and LOADED_ENGINE != engine:
+            logger.info("Loading engine: %s", engine)
+            client.predict(api_name=load_api)
+            LOADED_ENGINE = engine
+        result = client.predict(api_name=GRADIO_API_NAME, **params)
+    except Exception as exc:
+        safe_params = {}
+        for key, value in params.items():
+            if key in FILE_PARAM_NAMES or key.endswith("_ref_audio") or key.endswith("_emotion_audio"):
+                safe_params[key] = "file"
+            else:
+                safe_params[key] = value
+        logger.exception("Gradio call failed for engine %s with params %s", engine, safe_params)
+        raise HTTPException(status_code=502, detail=f"Gradio call failed: {exc}")
+
+    audio_path = result[0] if isinstance(result, (list, tuple)) else result
+    if not audio_path or not os.path.exists(audio_path):
+        raise HTTPException(status_code=502, detail="No audio file returned")
+    with open(audio_path, "rb") as audio_file:
+        audio_bytes = audio_file.read()
+    out_fmt = str(params.get("audio_format") or DEFAULT_FORMAT).lower()
+    media_type = "audio/mpeg" if out_fmt == "mp3" else "audio/wav"
+    return audio_bytes, media_type
+
+
+GRADIO_URL = normalize_gradio_url(GRADIO_URL)
+apply_gradio_env_override()
 
 
 @app.get("/health")
@@ -751,22 +946,33 @@ def engines() -> dict:
 
 @app.get("/v1/tts/params", dependencies=[Depends(require_admin)])
 def params(engine: Optional[str] = Query(default=None)) -> dict:
-    engine = engine if engine in list_supported_engines() else None
+    normalized = normalize_engine_name(engine) if engine else None
+    if normalized and normalized not in list_supported_engines():
+        normalized = None
     get_default_params()
-    status = GRADIO_STATUS.copy()
-    return {"params": list_param_specs(engine), "message": status.get("message"), "connected": status.get("connected"), "gradio_url": status.get("url")}
+    status = dict(GRADIO_STATUS)
+    return {
+        "params": list_param_specs(normalized),
+        "message": status.get("message"),
+        "connected": status.get("connected"),
+        "gradio_url": status.get("url"),
+    }
 
 
 @app.get("/v1/tts/gradio", dependencies=[Depends(require_admin)])
 def gradio_status() -> dict:
     get_default_params()
-    status = GRADIO_STATUS.copy()
-    return {"connected": status.get("connected"), "message": status.get("message"), "gradio_url": status.get("url")}
+    status = dict(GRADIO_STATUS)
+    return {
+        "connected": status.get("connected"),
+        "message": status.get("message"),
+        "gradio_url": status.get("url"),
+    }
 
 
 @app.post("/v1/tts/gradio", dependencies=[Depends(require_admin)])
 def set_gradio(payload: dict) -> dict:
-    global GRADIO_URL, GRADIO_STATUS
+    global GRADIO_URL
     url = str(payload.get("url", "")).strip()
     if not url:
         raise HTTPException(status_code=400, detail="url is required")
@@ -775,35 +981,46 @@ def set_gradio(payload: dict) -> dict:
     persist_env_value("GRADIO_URL", GRADIO_URL)
     reset_gradio_cache()
     get_default_params(force_refresh=True)
-    status = GRADIO_STATUS.copy()
-    return {"status": "updated", "connected": status.get("connected"), "message": status.get("message"), "gradio_url": status.get("url"), "params": list_param_specs()}
+    status = dict(GRADIO_STATUS)
+    return {
+        "status": "updated",
+        "connected": status.get("connected"),
+        "message": status.get("message"),
+        "gradio_url": status.get("url"),
+        "params": list_param_specs(),
+    }
 
 
 @app.post("/v1/tts/gradio/reload", dependencies=[Depends(require_admin)])
 def reload_gradio() -> dict:
     global GRADIO_URL
     env_value = read_env_value("GRADIO_URL")
-    if env_value:
-        GRADIO_URL = normalize_gradio_url(env_value)
-    else:
-        GRADIO_URL = normalize_gradio_url(DEFAULT_GRADIO_URL)
+    GRADIO_URL = normalize_gradio_url(env_value or DEFAULT_GRADIO_URL)
     os.environ["GRADIO_URL"] = GRADIO_URL
     reset_gradio_cache()
     get_default_params(force_refresh=True)
-    status = GRADIO_STATUS.copy()
-    return {"status": "reloaded", "connected": status.get("connected"), "message": status.get("message"), "gradio_url": status.get("url"), "params": list_param_specs()}
+    status = dict(GRADIO_STATUS)
+    return {
+        "status": "reloaded",
+        "connected": status.get("connected"),
+        "message": status.get("message"),
+        "gradio_url": status.get("url"),
+        "params": list_param_specs(),
+    }
 
 
 @app.get("/v1/tts/voice-choices", dependencies=[Depends(require_admin)])
 def voice_choices(engine: str = Query(...)) -> dict:
-    if engine not in list_supported_engines():
+    normalized = normalize_engine_name(engine)
+    if not normalized or normalized not in list_supported_engines():
         raise HTTPException(status_code=400, detail="Unknown engine")
-    return fetch_voice_choices(engine)
+    return fetch_voice_choices(normalized)
 
 
 @app.get("/v1/tts/voices", dependencies=[Depends(require_admin)])
 def voices() -> dict:
     return {"voices": load_voices()}
+
 
 @app.get("/v1/tts/api-key", dependencies=[Depends(require_admin)])
 def api_key_status() -> dict:
@@ -819,10 +1036,7 @@ def api_key_generate() -> dict:
 
 
 @app.post("/v1/tts/voices", dependencies=[Depends(require_admin)])
-def create_voice(
-    name: str = Form(default=""),
-    file: UploadFile = File(...),
-) -> dict:
+def create_voice(name: str = Form(default=""), file: UploadFile = File(...)) -> dict:
     ensure_data_dirs()
     voices = load_voices()
     existing = {voice["id"] for voice in voices}
@@ -831,15 +1045,14 @@ def create_voice(
     extension = Path(file.filename or "").suffix.lower() or ".wav"
     filename = f"{voice_id}{extension}"
     target_path = VOICE_DIR / filename
-
     with target_path.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-
     voice_data = {
         "id": voice_id,
         "label": label,
         "filename": filename,
         "created_at": now_iso(),
+        "updated_at": now_iso(),
     }
     voices.append(voice_data)
     save_voices(voices)
@@ -847,22 +1060,16 @@ def create_voice(
 
 
 @app.put("/v1/tts/voices/{voice_id}", dependencies=[Depends(require_admin)])
-def update_voice(
-    voice_id: str,
-    name: str = Form(default=""),
-    file: Optional[UploadFile] = File(default=None),
-) -> dict:
+def update_voice(voice_id: str, name: str = Form(default=""), file: Optional[UploadFile] = File(default=None)) -> dict:
     voices = load_voices()
     voice = next((v for v in voices if v.get("id") == voice_id), None)
     if not voice:
         raise HTTPException(status_code=404, detail="Voice not found")
-
     updated = False
     label = name.strip()
     if label:
         voice["label"] = label
         updated = True
-
     if file is not None:
         ensure_data_dirs()
         old_path = resolve_voice_path(voice)
@@ -875,10 +1082,8 @@ def update_voice(
             old_path.unlink()
         voice["filename"] = filename
         updated = True
-
     if not updated:
         raise HTTPException(status_code=400, detail="No changes provided")
-
     voice["updated_at"] = now_iso()
     save_voices(voices)
     return {"voice": voice}
@@ -901,24 +1106,21 @@ def delete_voice(voice_id: str) -> dict:
     presets = load_presets()
     if any(preset.get("voice_id") == voice_id for preset in presets):
         raise HTTPException(status_code=409, detail="Voice is used by a preset")
-
     voice = next((v for v in voices if v.get("id") == voice_id), None)
-    remaining = [voice for voice in voices if voice.get("id") != voice_id]
+    remaining = [voice_record for voice_record in voices if voice_record.get("id") != voice_id]
     if len(remaining) == len(voices):
         raise HTTPException(status_code=404, detail="Voice not found")
     save_voices(remaining)
-
     if voice:
         file_path = resolve_voice_path(voice)
         if file_path.exists():
             file_path.unlink()
-
     return {"status": "deleted"}
 
 
 @app.get("/v1/tts/presets", dependencies=[Depends(require_admin)])
 def presets() -> dict:
-    return {"presets": load_presets()}
+    return {"presets": [normalize_preset_record(preset) for preset in load_presets()]}
 
 
 @app.get("/v1/tts/presets/{preset_name}", dependencies=[Depends(require_admin)])
@@ -933,10 +1135,10 @@ def preset(preset_name: str) -> dict:
 def create_preset(payload: dict) -> dict:
     name = str(payload.get("name", "")).strip()
     label = str(payload.get("label", "")).strip()
-    engine = payload.get("engine")
+    engine = normalize_engine_name(payload.get("engine"))
     if not name:
         raise HTTPException(status_code=400, detail="Preset name is required")
-    if engine not in list_supported_engines():
+    if not engine or engine not in list_supported_engines():
         raise HTTPException(status_code=400, detail="Unknown engine")
     voice_id = payload.get("voice_id")
     if voice_id and not find_voice(voice_id):
@@ -945,7 +1147,12 @@ def create_preset(payload: dict) -> dict:
     if not isinstance(params, dict):
         raise HTTPException(status_code=400, detail="Params must be an object")
 
-    overwrite = parse_bool(payload.get("overwrite"))
+    reference_text = str(payload.get("reference_text", "") or "").strip()
+    ref_text_param = ENGINE_REF_TEXT_PARAM.get(engine)
+    if reference_text and ref_text_param:
+        params[ref_text_param] = reference_text
+
+    overwrite = bool(payload.get("overwrite"))
     existing = find_preset(name)
     if existing and not overwrite:
         raise HTTPException(status_code=409, detail="Preset already exists")
@@ -953,37 +1160,70 @@ def create_preset(payload: dict) -> dict:
     if not label:
         label = name
 
-    presets = load_presets()
-    presets = [preset for preset in presets if preset.get("name") != name]
-    presets.append({
-        "name": name,
-        "label": label,
-        "engine": engine,
-        "voice_id": voice_id,
-        "params": params,
-        "updated_at": now_iso(),
-    })
-    save_presets(presets)
+    presets_data = load_presets()
+    presets_data = [preset_record for preset_record in presets_data if preset_record.get("name") != name]
+    presets_data.append(
+        {
+            "name": name,
+            "label": label,
+            "engine": engine,
+            "voice_id": voice_id,
+            "params": params,
+            "transform_enabled": bool(payload.get("transform_enabled", False)),
+            "updated_at": now_iso(),
+        }
+    )
+    save_presets(presets_data)
     return {"preset": find_preset(name)}
 
 
 @app.delete("/v1/tts/presets/{preset_name}", dependencies=[Depends(require_admin)])
 def delete_preset(preset_name: str) -> dict:
-    presets = load_presets()
-    remaining = [preset for preset in presets if preset.get("name") != preset_name]
-    if len(remaining) == len(presets):
+    presets_data = load_presets()
+    remaining = [preset_record for preset_record in presets_data if preset_record.get("name") != preset_name]
+    if len(remaining) == len(presets_data):
         raise HTTPException(status_code=404, detail="Preset not found")
     save_presets(remaining)
     return {"status": "deleted"}
 
 
+@app.get("/v1/tts/transformer", dependencies=[Depends(require_admin)])
+def transformer_status() -> dict:
+    config = load_transformer_config()
+    health = fetch_transformer_health(config)
+    return {**config, **health}
+
+
+@app.post("/v1/tts/transformer", dependencies=[Depends(require_admin)])
+def update_transformer(payload: dict) -> dict:
+    config = save_transformer_config(payload)
+    health = fetch_transformer_health(config)
+    return {**config, **health}
+
+
+@app.post("/v1/tts/transformer/test", dependencies=[Depends(require_admin)])
+def test_transformer(payload: dict) -> dict:
+    text = str(payload.get("text", "") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    base_config = load_transformer_config()
+    config = {
+        **base_config,
+        "mode": payload.get("mode", base_config.get("mode")),
+        "tone_profile": payload.get("tone_profile", base_config.get("tone_profile")),
+        "url": normalize_service_url(str(payload.get("url") or base_config.get("url") or DEFAULT_TRANSFORMER_URL), DEFAULT_TRANSFORMER_URL),
+    }
+    result = call_transformer(text, config)
+    health = fetch_transformer_health(config)
+    return {**result, **health}
+
+
 @app.get("/v1/models")
 def models(request: Request) -> dict:
     require_api_key(request)
-    engines = list_supported_engines()
     return {
         "object": "list",
-        "data": [{"id": engine, "object": "model"} for engine in engines],
+        "data": [{"id": engine, "object": "model"} for engine in list_supported_engines()],
     }
 
 
@@ -996,126 +1236,35 @@ def audio_models(request: Request) -> dict:
 @app.get("/v1/audio/voices")
 def audio_voices(request: Request) -> dict:
     require_api_key(request)
-    presets = load_presets()
-    voices = load_voices()
+    presets_data = [normalize_preset_record(preset) for preset in load_presets()]
+    voices_data = load_voices()
     seen = set()
     items = []
-    for preset in presets:
-        label = preset_label(preset)
+    for preset_record in presets_data:
+        label = preset_label(preset_record)
         if not label or label in seen:
             continue
         seen.add(label)
         items.append({"id": label, "object": "voice"})
-    for voice in voices:
+    for voice in voices_data:
         if voice["id"] in seen:
             continue
         seen.add(voice["id"])
         items.append({"id": voice["id"], "object": "voice"})
-    return {
-        "object": "list",
-        "data": items,
-    }
+    return {"object": "list", "data": items}
 
 
 @app.post("/v1/audio/speech")
 def speech(req: OpenAITTSSpeechRequest, request: Request) -> Response:
     require_api_key(request)
-    text = (req.input or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Missing 'input' text")
-
     preset = find_preset(req.voice) if req.voice else None
     if not preset and req.voice:
         preset = find_preset_by_label(req.voice, req.model or DEFAULT_TTS_ENGINE)
     voice_sample = find_voice(req.voice) if req.voice and not preset else None
-    tts_engine = resolve_engine(req, preset)
-    if preset and req.model and preset.get("engine") != req.model:
+    engine = resolve_engine(req, preset)
+    if preset and req.model and normalize_engine_name(preset.get("engine")) != normalize_engine_name(req.model):
         raise HTTPException(status_code=400, detail="Preset engine does not match model")
 
-    out_fmt = resolve_output_format(req, preset)
-
-    defaults = get_default_params()
-    params = defaults.copy()
-    if preset and isinstance(preset.get("params"), dict):
-        params.update(preset["params"])
-    params.update({
-        "text_input": text,
-        "tts_engine": tts_engine,
-        "audio_format": out_fmt,
-    })
-
-    if voice_sample:
-        ref_param = ENGINE_REF_PARAM.get(tts_engine)
-        if ref_param:
-            params[ref_param] = handle_file(str(resolve_voice_path(voice_sample)))
-
-    if preset and preset.get("voice_id"):
-        ref_param = ENGINE_REF_PARAM.get(tts_engine)
-        if ref_param:
-            voice = find_voice(preset["voice_id"])
-            if voice:
-                params[ref_param] = handle_file(str(resolve_voice_path(voice)))
-
-    if req.voice and not preset and tts_engine in ENGINE_VOICE_PARAM:
-        voice_param = ENGINE_VOICE_PARAM[tts_engine]
-        if voice_param and req.voice:
-            params[voice_param] = req.voice
-
-    for key, value in list(params.items()):
-        if (
-            key in FILE_PARAM_NAMES
-            or key.endswith("_ref_audio")
-            or key.endswith("_emotion_audio")
-        ):
-            resolved = resolve_voice_reference(value) if isinstance(value, str) else None
-            if resolved:
-                params[key] = handle_file(resolved)
-            elif value in ("", None):
-                params[key] = None
-
-    required_ref_param = ENGINE_REF_PARAM.get(tts_engine)
-    if tts_engine in REQUIRED_REF_ENGINES and required_ref_param:
-        if not params.get(required_ref_param):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Reference audio is required for {tts_engine}. Save a voice sample and attach it to the preset.",
-            )
-
-    if CHATTERBOX_TURBO_REF_AUDIO:
-        if not os.path.isfile(CHATTERBOX_TURBO_REF_AUDIO):
-            raise HTTPException(
-                status_code=500,
-                detail="CHATTERBOX_TURBO_REF_AUDIO path does not exist",
-            )
-        params["chatterbox_turbo_ref_audio"] = handle_file(
-            CHATTERBOX_TURBO_REF_AUDIO
-        )
-
-    try:
-        client = Client(GRADIO_URL)
-        if AUTO_LOAD_ENGINE and ENGINE_LOAD_API.get(tts_engine):
-            global LOADED_ENGINE
-            if LOADED_ENGINE != tts_engine:
-                logger.info("Loading engine: %s", tts_engine)
-                client.predict(api_name=ENGINE_LOAD_API[tts_engine])
-                LOADED_ENGINE = tts_engine
-        result = client.predict(api_name=GRADIO_API_NAME, **params)
-    except Exception as exc:
-        safe_params = {}
-        for key, value in params.items():
-            if key in FILE_PARAM_NAMES or key.endswith("_ref_audio") or key.endswith("_emotion_audio"):
-                safe_params[key] = "file"
-            else:
-                safe_params[key] = value
-        logger.exception("Gradio call failed for engine %s with params %s", tts_engine, safe_params)
-        raise HTTPException(status_code=502, detail=f"Gradio call failed: {exc}")
-
-    audio_path = result[0] if isinstance(result, (list, tuple)) else result
-    if not audio_path or not os.path.exists(audio_path):
-        raise HTTPException(status_code=502, detail="No audio file returned")
-
-    with open(audio_path, "rb") as audio_file:
-        audio_bytes = audio_file.read()
-
-    media_type = "audio/mpeg" if out_fmt == "mp3" else "audio/wav"
+    params = build_params(req, preset, voice_sample, engine)
+    audio_bytes, media_type = call_ultimate_tts(engine, params)
     return Response(content=audio_bytes, media_type=media_type)
