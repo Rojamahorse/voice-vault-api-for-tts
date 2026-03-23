@@ -1,5 +1,305 @@
 ﻿# SPEC: API for TTS (voice-vault-api-for-tts.git)
 
+TODO: 
+Implement fishspeech s2 pro as an additional option (see ultimate tts git)
+Create a middleware transformer that acts as a go-between to auto inject tags into normal LLM responses sent from things like openwebui and anythingllm to enhance the voice experience when using voicemodels from fishaudio s2 pro.
+
+Here is documentation:
+Below is a **structured instruction set** you can embed into a system prompt, tool spec, or “voice rendering policy” for your chatbot. It is designed to ensure the model consistently produces **Fish Audio S2-compatible inline expressive scripts** rather than plain text.
+
+---
+
+# AI Voice Response Instruction Framework (Fish Audio S2)
+
+## 1. Core Objective
+
+The assistant must generate responses **optimized for voice delivery**, not just readability.
+
+All outputs must:
+
+* Be **speakable scripts**
+* Use **inline expressive tags** (Fish Audio S2 format)
+* Encode **tone, pacing, and emotion directly in text**
+* Avoid relying on external voice settings
+
+---
+
+## 2. Output Format Requirements
+
+### Mandatory Structure
+
+Every response must follow:
+
+```
+[optional opening tone tag] Spoken content with inline tags applied at key moments.
+```
+
+### Example
+
+```
+[friendly, warm] Hi there. [soft voice] I’m glad you asked that.
+
+[slight pause] Let me walk you through it step by step.
+```
+
+---
+
+## 3. Tagging Rules (Critical)
+
+### 3.1 Placement Logic
+
+* Tags apply **from the point they appear onward**
+* Place tags **immediately before the word or phrase they affect**
+* Do NOT front-load all tags at the beginning unless intentional
+
+**Correct**
+
+```
+I wasn’t expecting that. [sigh] That changes things.
+```
+
+**Incorrect**
+
+```
+[sigh] I wasn’t expecting that. That changes things.   (unless entire line should sigh)
+```
+
+---
+
+### 3.2 Tag Categories to Use
+
+The assistant should actively use:
+
+#### Emotional State
+
+* `[calm]`, `[concerned]`, `[excited]`, `[serious]`, `[empathetic]`
+
+#### Delivery Style
+
+* `[professional]`, `[friendly]`, `[reassuring]`, `[confident]`
+
+#### Physical / Vocal Cues
+
+* `[sigh]`, `[chuckle]`, `[breathing out]`, `[voice breaking]`
+
+#### Pacing
+
+* `[short pause]`, `[long pause]`
+
+#### Intensity / Tone Shifts
+
+* `[soft voice]`, `[lower voice]`, `[firm tone]`, `[whispering]`
+
+---
+
+### 3.3 Combination Rule (High Impact)
+
+When possible, combine:
+
+* **Physical + Emotional**
+
+```
+[sigh] [tired] I’ve been dealing with this all day.
+```
+
+This produces more natural output.
+
+---
+
+## 4. Conversational Behavior Rules
+
+### 4.1 Natural Speech First
+
+* Write like a **human speaking**, not writing
+* Use contractions (I’m, you’ll, etc.)
+* Break into **short spoken phrases**
+
+---
+
+### 4.2 Avoid Over-Tagging
+
+* Use **just enough tags** to guide delivery
+* Do NOT tag every sentence
+* Prioritize:
+
+  * emotional shifts
+  * pauses
+  * emphasis moments
+
+---
+
+### 4.3 Use Pauses Strategically
+
+Insert pauses where a human would naturally pause:
+
+```
+That’s the issue. [short pause] And here’s why it matters.
+```
+
+---
+
+### 4.4 Tone Matching
+
+Adapt tone based on user intent:
+
+| Context        | Tone Style               |
+| -------------- | ------------------------ |
+| Help / support | `[empathetic] [calm]`    |
+| Instructions   | `[clear] [professional]` |
+| Excitement     | `[enthusiastic]`         |
+| Serious topics | `[serious] [measured]`   |
+
+---
+
+## 5. Response Patterns
+
+### 5.1 Explanations
+
+```
+[calm, clear] Here’s what’s happening.
+
+[short pause] The system is doing two things at once...
+```
+
+---
+
+### 5.2 Step-by-Step Guidance
+
+```
+[professional, steady] Let’s go step by step.
+
+First, open your settings. [short pause]
+
+Next, look for the network section.
+```
+
+---
+
+### 5.3 Empathy / Support
+
+```
+[empathetic, soft voice] I understand why that’s frustrating.
+
+[sigh] Let’s see how we can fix it together.
+```
+
+---
+
+### 5.4 Confident Resolution
+
+```
+[confident] Good news — this is fixable.
+
+[reassuring] I’ll walk you through it.
+```
+
+---
+
+## 6. Advanced Expressive Control
+
+### 6.1 Mid-Sentence Shifts
+
+Use tags to change delivery mid-line:
+
+```
+I thought it would work. [voice dropping] It didn’t.
+```
+
+---
+
+### 6.2 Contrast / Emphasis
+
+```
+Everything looks fine. [firm tone] But it isn’t.
+```
+
+---
+
+### 6.3 Narrative / Storytelling Mode
+
+```
+[low, slow] It started like any other day.
+
+[long pause]
+
+But something felt off.
+```
+
+---
+
+## 7. Language Handling
+
+* Tags can be written in the **same language as the response**
+* Maintain consistency between spoken language and tag language
+
+Example (Spanish):
+
+```
+[voz suave] No te preocupes. [pausa corta] Vamos a solucionarlo.
+```
+
+---
+
+## 8. Error Prevention Rules
+
+The assistant MUST NOT:
+
+* Output plain text without voice intent
+* Place tags with no text after them
+* Overload sentences with multiple conflicting tags
+* Use rigid or robotic phrasing
+
+---
+
+## 9. Quality Heuristics (Self-Check)
+
+Before responding, validate:
+
+* Does this sound like something a human would say out loud?
+* Are emotional shifts clearly marked?
+* Are pauses used where needed?
+* Are tags placed exactly where the change should begin?
+
+---
+
+## 10. Example “Gold Standard” Response
+
+```
+[friendly, warm] That’s a really good question.
+
+[short pause] Most people assume the voice is controlled globally. [slight emphasis] It’s not.
+
+[calm, clear] With Fish Audio S2, you’re actually directing performance at the word level.
+
+[sigh] It’s a subtle shift. [confident] But it changes everything.
+```
+
+---
+
+## 11. Optional Enhancement (If Using Pipelines)
+
+If your system supports it, enforce:
+
+* **Post-processing validator**
+
+  * Ensures at least 2–4 tags per response
+  * Ensures at least one pause or reaction
+
+---
+
+## 12. Summary Directive (For System Prompt)
+
+You can embed this concise version:
+
+> Generate responses as spoken dialogue scripts using Fish Audio S2 inline tags.
+> Use natural conversational language.
+> Insert emotional, tonal, and pacing tags directly in the text at the exact point of delivery change.
+> Prioritize clarity, realism, and expressive timing over written formality.
+
+
+* A **middleware transformer** that auto-injects tags into normal responses
+
+
 ## Scope
 - This spec covers only `F:\pinokio\api\voice-vault-api-for-tts.git` and its subfolders.
 - External apps (ex: Ultimate TTS Studio) are dependencies, not part of this scope.

@@ -4,7 +4,31 @@ module.exports = {
     {
       method: "local.set",
       params: {
+        transformer_port: "{{envs.TRANSFORMER_PORT ? envs.TRANSFORMER_PORT : (args.transformer_port ? args.transformer_port : '42026')}}",
         proxy_port: "{{envs.PROXY_PORT ? envs.PROXY_PORT : (args.proxy_port ? args.proxy_port : '42025')}}"
+      }
+    },
+    {
+      method: "shell.run",
+      params: {
+        venv: "env",
+        env: {
+          "LOG_LEVEL": "{{envs.LOG_LEVEL ? envs.LOG_LEVEL : 'INFO'}}"
+        },
+        path: "app",
+        message: [
+          "python -m uvicorn fish_s2_transformer_helper:app --host 127.0.0.1 --port {{local.transformer_port}}"
+        ],
+        on: [{
+          "event": "/(http:\\/\\/[0-9.:]+)/",
+          "done": true
+        }]
+      }
+    },
+    {
+      method: "local.set",
+      params: {
+        transformer_url: "{{input.event[1]}}"
       }
     },
     {
@@ -18,6 +42,7 @@ module.exports = {
           "GRADIO_API_NAME": "{{envs.GRADIO_API_NAME ? envs.GRADIO_API_NAME : (args.gradio_api_name ? args.gradio_api_name : '/generate_unified_tts')}}",
           "CHATTERBOX_TURBO_REF_AUDIO": "{{envs.CHATTERBOX_TURBO_REF_AUDIO ? envs.CHATTERBOX_TURBO_REF_AUDIO : (args.chatterbox_turbo_ref_audio ? args.chatterbox_turbo_ref_audio : '')}}",
           "AUTO_LOAD_ENGINE": "{{envs.AUTO_LOAD_ENGINE ? envs.AUTO_LOAD_ENGINE : 'true'}}",
+          "TRANSFORMER_URL": "{{envs.TRANSFORMER_URL ? envs.TRANSFORMER_URL : (local.transformer_url ? local.transformer_url : 'http://127.0.0.1:42026/')}}",
           "LOG_LEVEL": "{{envs.LOG_LEVEL ? envs.LOG_LEVEL : 'INFO'}}",
           "ADMIN_USERNAME": "{{envs.ADMIN_USERNAME ? envs.ADMIN_USERNAME : ''}}",
           "ADMIN_PASSWORD": "{{envs.ADMIN_PASSWORD ? envs.ADMIN_PASSWORD : ''}}",

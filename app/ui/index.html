@@ -635,7 +635,7 @@
           <div>
             <label for="presetName">Preset name</label>
             <input id="presetName" placeholder="Matt" />
-            <div class="hint" id="presetNameHint">Auto-fills from the voice label. Engine stays separate.</div>
+            <div class="hint" id="presetNameHint">Use the same name across engines so clients only need to switch models. If you want a second variant, name it something like "Matt (emotional)".</div>
           </div>
           <div>
             <label for="presetEngine">Engine</label>
@@ -659,7 +659,12 @@
             <div class="hint" id="emotionSampleHint"></div>
           </div>
           <div>
-            <label for="gradioUrl">Gradio target</label>
+            <label for="presetReferenceText">Reference transcript (optional)</label>
+            <textarea id="presetReferenceText" placeholder="Transcript for the saved reference audio"></textarea>
+            <div class="hint" id="referenceTextHint">Used by Fish S1, Fish S2 Pro, and other reference-text engines.</div>
+          </div>
+          <div>
+            <label for="gradioUrl">Ultimate TTS target</label>
             <input id="gradioUrl" class="input-ghost" />
             <div class="inline-buttons" style="margin-top: 8px;">
               <button type="button" class="ghost" id="reconnectGradio">Reconnect</button>
@@ -687,8 +692,70 @@
         <div class="status" id="presetStatus"></div>
       </section>
 
+      <details class="card" style="margin-top: 20px;">
+        <summary>Transformer</summary>
+        <div class="collapse-body">
+          <div class="builder-grid">
+            <div>
+              <label for="transformerEnabled">Enabled</label>
+              <select id="transformerEnabled">
+                <option value="false">Off</option>
+                <option value="true">On</option>
+              </select>
+            </div>
+            <div>
+              <label for="transformerUrl">Helper URL</label>
+              <input id="transformerUrl" class="input-ghost" />
+            </div>
+            <div>
+              <label for="transformerMode">Policy preset</label>
+              <select id="transformerMode">
+                <option value="balanced">Balanced</option>
+                <option value="instructional">Instructional</option>
+                <option value="supportive">Supportive</option>
+                <option value="dramatic">Dramatic</option>
+              </select>
+            </div>
+            <div>
+              <label for="transformerTone">Default tone profile</label>
+              <select id="transformerTone">
+                <option value="warm">Warm</option>
+                <option value="neutral">Neutral</option>
+                <option value="serious">Serious</option>
+              </select>
+            </div>
+            <div>
+              <label for="presetTransformEnabled">Apply to current preset</label>
+              <select id="presetTransformEnabled">
+                <option value="false">Off</option>
+                <option value="true">On</option>
+              </select>
+              <div class="hint">This only controls whether the current preset uses the global transformer profile. It does not change the global transformer settings.</div>
+            </div>
+          </div>
+          <div class="row" style="margin-top: 12px;">
+            <button type="button" id="saveTransformer">Save global transformer settings</button>
+            <button type="button" class="ghost" id="checkTransformer">Check helper</button>
+          </div>
+          <div class="status" id="transformerStatus"></div>
+          <div class="hint" style="margin-top: 10px;">Global transformer settings are shared by all presets that have transformer enabled. Saving a preset does not overwrite these global settings.</div>
+          <div style="margin-top: 12px;">
+            <label for="transformerInput">Dry-run preview input</label>
+            <textarea id="transformerInput" placeholder="Plain LLM response text"></textarea>
+          </div>
+          <div class="row" style="margin-top: 12px;">
+            <button type="button" id="testTransformer">Test transform</button>
+          </div>
+          <div style="margin-top: 12px;">
+            <label for="transformerOutput">Dry-run preview output</label>
+            <textarea id="transformerOutput" readonly></textarea>
+          </div>
+        </div>
+      </details>
+
       <section class="card" style="margin-top: 20px;">
         <h2>API Cheat Sheet</h2>
+        <div class="hint" style="margin-bottom: 12px;">Fish S2 uses the same API. Select model <strong>Fish Speech S2 Pro</strong> and set voice to a saved preset or voice sample.</div>
         <div class="row">
           <div>
             <label>Base URL</label>
@@ -753,7 +820,8 @@
         voiceChoices: { choices: [], param: "" },
         paramDefaults: {},
         paramSpecs: {},
-        apiKey: ""
+        apiKey: "",
+        transformer: {}
       };
 
       const editorState = {
@@ -776,6 +844,17 @@
       const gradioStatus = document.getElementById("gradioStatus");
       const reconnectGradioBtn = document.getElementById("reconnectGradio");
       const updateGradioBtn = document.getElementById("updateGradio");
+      const transformerEnabled = document.getElementById("transformerEnabled");
+      const transformerUrl = document.getElementById("transformerUrl");
+      const transformerMode = document.getElementById("transformerMode");
+      const transformerTone = document.getElementById("transformerTone");
+      const transformerStatus = document.getElementById("transformerStatus");
+      const transformerInput = document.getElementById("transformerInput");
+      const transformerOutput = document.getElementById("transformerOutput");
+      const saveTransformerBtn = document.getElementById("saveTransformer");
+      const checkTransformerBtn = document.getElementById("checkTransformer");
+      const testTransformerBtn = document.getElementById("testTransformer");
+      const presetTransformEnabled = document.getElementById("presetTransformEnabled");
 
       const voiceForm = document.getElementById("voiceForm");
       const voiceStatus = document.getElementById("voiceStatus");
@@ -813,6 +892,8 @@
       const voiceChoiceHint = document.getElementById("voiceChoiceHint");
       const presetEmotionSample = document.getElementById("presetEmotionSample");
       const emotionSampleHint = document.getElementById("emotionSampleHint");
+      const presetReferenceText = document.getElementById("presetReferenceText");
+      const referenceTextHint = document.getElementById("referenceTextHint");
       const paramForm = document.getElementById("paramForm");
       const resetParamsBtn = document.getElementById("resetParams");
       const presetParams = document.getElementById("presetParams");
@@ -1490,12 +1571,13 @@
         }
         state.presets.forEach((preset) => {
           const label = preset.label || preset.name;
+          const transformBadge = preset.transform_enabled ? " · emotional" : "";
           const item = document.createElement("div");
           item.className = "list-item";
           item.innerHTML = `
             <div>
               <strong>${label}</strong>
-              <div class="hint">${preset.engine}</div>
+              <div class="hint">${preset.engine}${transformBadge}</div>
             </div>
             <div class="row" style="grid-template-columns: repeat(2, minmax(0, 1fr));">
               <button data-use="${preset.name}" class="ghost">Load</button>
@@ -1538,7 +1620,10 @@
         apiKey.value = state.apiKey || "";
         cheatModel.value = engine || "(select engine)";
         cheatVoice.value = voice || "(preset name)";
-        curlExample.textContent = `curl -X POST ${base}/audio/speech \\\n  -H \"Content-Type: application/json\" \\\n${authHeader}  -d '{\"input\":\"Hello\",\"model\":\"${engine || "Chatterbox Turbo"}\",\"voice\":\"${voice || "preset-name"}\",\"response_format\":\"mp3\"}' \\\n  --output out.mp3`;
+        const extra = engine === "Fish Speech S2 Pro"
+          ? `,\"reference_text\":\"${(presetReferenceText.value || "Reference transcript").replace(/"/g, '\\"')}\",\"transform\":${transformerEnabled.value === "true" ? "true" : "false"}`
+          : "";
+        curlExample.textContent = `curl -X POST ${base}/audio/speech \\\n  -H \"Content-Type: application/json\" \\\n${authHeader}  -d '{\"input\":\"Hello\",\"model\":\"${engine || "Chatterbox Turbo"}\",\"voice\":\"${voice || "preset-name"}\",\"response_format\":\"mp3\"${extra}}' \\\n  --output out.mp3`;
         modelsExample.textContent = state.apiKey
           ? `curl -H \"Authorization: Bearer ${state.apiKey}\" ${base}/models`
           : `curl ${base}/models`;
@@ -1573,13 +1658,76 @@
 
       function setGradioStatus(message, connected) {
         if (connected === false) {
-          setStatus(gradioStatus, message || "Gradio is not reachable yet.", true);
+          setStatus(gradioStatus, message || "Ultimate TTS is not reachable yet.", true);
           return;
         }
-        const display = message && message !== "Loaded from Gradio metadata."
+        const display = message && message !== "Loaded from Ultimate TTS metadata."
           ? message
-          : "Gradio connected.";
+          : "Ultimate TTS connected.";
         setStatus(gradioStatus, display, false);
+      }
+
+      function setTransformerStatus(message, isError) {
+        setStatus(transformerStatus, message, isError);
+      }
+
+      function engineUsesReferenceText(engine) {
+        return ["Fish Speech S1", "Fish Speech S2 Pro", "F5-TTS", "Higgs Audio", "VoxCPM", "Qwen Voice Clone"].includes(engine);
+      }
+
+      async function refreshTransformer() {
+        const data = await fetchJson("/v1/tts/transformer");
+        state.transformer = data;
+        transformerEnabled.value = data.enabled ? "true" : "false";
+        transformerUrl.value = data.url || "";
+        transformerMode.value = data.mode || "balanced";
+        transformerTone.value = data.tone_profile || "warm";
+        setTransformerStatus(data.connected ? "Transformer helper connected." : data.message || "Transformer helper unavailable.", !data.connected);
+      }
+
+      async function saveTransformer() {
+        try {
+          const payload = {
+            enabled: transformerEnabled.value === "true",
+            url: transformerUrl.value.trim(),
+            mode: transformerMode.value,
+            tone_profile: transformerTone.value
+          };
+          const data = await fetchJson("/v1/tts/transformer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          state.transformer = data;
+          setTransformerStatus(data.connected ? "Transformer config saved." : data.message || "Transformer helper unavailable.", !data.connected);
+          updateCheatSheet();
+        } catch (err) {
+          setTransformerStatus(err.message, true);
+        }
+      }
+
+      async function testTransformer() {
+        const text = transformerInput.value.trim();
+        if (!text) {
+          setTransformerStatus("Enter text to test the transformer.", true);
+          return;
+        }
+        try {
+          const data = await fetchJson("/v1/tts/transformer/test", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text,
+              url: transformerUrl.value.trim(),
+              mode: transformerMode.value,
+              tone_profile: transformerTone.value
+            })
+          });
+          transformerOutput.value = data.transformed_text || "";
+          setTransformerStatus(data.connected ? "Transformer preview generated." : data.message || "Transformer helper unavailable.", !data.connected);
+        } catch (err) {
+          setTransformerStatus(err.message, true);
+        }
       }
 
       async function refreshGradioStatus() {
@@ -1635,6 +1783,9 @@
           : "Optional.";
         emotionSampleHint.textContent = engine === "IndexTTS2"
           ? "Used when emotion mode is audio_reference."
+          : "Not used by this engine.";
+        referenceTextHint.textContent = engineUsesReferenceText(engine)
+          ? "Optional transcript sent with the reference audio."
           : "Not used by this engine.";
       }
 
@@ -1748,6 +1899,11 @@
         } else {
           presetEmotionSample.value = "";
         }
+        const refTextKey = preset.engine === "Fish Speech S2 Pro"
+          ? "fish_s2_ref_text"
+          : (preset.engine === "Fish Speech S1" ? "fish_ref_text" : "");
+        presetReferenceText.value = refTextKey ? (storedParams[refTextKey] || "") : "";
+        presetTransformEnabled.value = preset.transform_enabled ? "true" : "false";
         presetParams.value = "";
         updateCheatSheet();
       }
@@ -1952,6 +2108,11 @@
       });
 
       presetEngine.addEventListener("input", updateCheatSheet);
+      presetReferenceText.addEventListener("input", updateCheatSheet);
+      presetTransformEnabled.addEventListener("input", updateCheatSheet);
+      saveTransformerBtn.addEventListener("click", saveTransformer);
+      checkTransformerBtn.addEventListener("click", refreshTransformer);
+      testTransformerBtn.addEventListener("click", testTransformer);
 
       savePresetBtn.addEventListener("click", async () => {
         const label = presetName.value.trim();
@@ -1990,14 +2151,26 @@
         if (presetEmotionSample.value && engine === "IndexTTS2") {
           params.indextts2_emotion_audio = presetEmotionSample.value;
         }
+        const referenceText = presetReferenceText.value.trim();
         const existing = state.presets.find((preset) => preset.name === name);
         const overwrite = existing
-          ? window.confirm(`Preset "${label}" already exists for this engine. Replace it?`)
+          ? window.confirm(
+              `Preset "${label}" already exists for ${engine}. Replacing it will update only that preset, including its transformer on/off setting. Global transformer settings will stay unchanged.\n\nIf you want both versions, save the second one with a different name such as "${label} (emotional)".`
+            )
           : false;
         if (existing && !overwrite) {
           return;
         }
-        const payload = { name, label, engine, voice_id: voiceId, params, overwrite };
+        const payload = {
+          name,
+          label,
+          engine,
+          voice_id: voiceId,
+          params,
+          reference_text: referenceText,
+          transform_enabled: presetTransformEnabled.value === "true",
+          overwrite
+        };
         try {
           await fetchJson("/v1/tts/presets", {
             method: "POST",
@@ -2018,6 +2191,8 @@
         presetVoiceSample.value = "";
         presetVoiceChoice.value = "";
         presetEmotionSample.value = "";
+        presetReferenceText.value = "";
+        presetTransformEnabled.value = "false";
         resetParamForm();
         setStatus(presetStatus, "");
         autoNameEnabled = true;
@@ -2031,6 +2206,7 @@
         resetEditor();
         try {
           await refreshApiKey();
+          await refreshTransformer();
           await refreshGradioStatus();
           await refreshEngines();
           await refreshVoices();

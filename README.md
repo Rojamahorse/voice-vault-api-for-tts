@@ -10,6 +10,8 @@ Ultimate-TTS-Studio.git folder.
   `/generate_unified_tts` calls.
 - Returns raw audio bytes (`mp3` or `wav`) to the caller.
 - Hosts a Voice Manager UI for saving voice samples and engine presets.
+- Starts a separate local Fish S2 transformer helper and lets you manage it from
+  the same Voice Manager UI.
 
 ## How to use
 1. Start Ultimate TTS Studio on this machine and make sure Gradio is running
@@ -27,6 +29,7 @@ Defaults:
 - `DEFAULT_TTS_ENGINE` is set to `Chatterbox Turbo`.
 - `DEFAULT_FORMAT` is set to `mp3`.
   - The proxy pulls the Gradio defaults for all other parameters.
+- The bundled transformer helper listens on `http://127.0.0.1:42026/`.
 
 Optional environment variables (set via `start.js` params):
 - `GRADIO_URL` (default: `http://127.0.0.1:7860/`)
@@ -46,11 +49,14 @@ OpenWebUI quick notes:
 - Set TTS Base URL to `http://192.168.0.236:<proxy_port>/v1`.
 - Set TTS Model to any engine from Ultimate TTS Studio.
 - Set Voice to a saved preset name (optional).
+- For Fish S2, use model `Fish Speech S2 Pro`.
 
 ## Voice Manager UI
 The Voice Manager UI lives at `/ui` on the proxy. It lets you:
 - Upload reference audio clips into a local vault.
 - Build presets per engine (voice sample + parameter overrides).
+- Add optional reference transcript text for Fish Speech S1 and Fish Speech S2 Pro.
+- Configure the transformer helper, test rewritten scripts, and enable it per preset.
 - Copy the exact model and voice strings to use in OpenWebUI.
 
 Preset behavior:
